@@ -80,4 +80,25 @@ describe('plan', () => {
     assert.ok(keep.some((a) => a.dest === '10.0.0.0' && a.prefix === 8));
     assert.equal(keep.some((a) => a.dest === '10.10.0.0'), false);
   });
+
+  it('inverse adds inet6 /1 via LAN gw6 when present', () => {
+    const base = sampleDetect();
+    const detect = sampleDetect({
+      lan: { ...base.lan, gw6: 'fe80::1%en0' },
+    });
+    const actions = planInverse(detect);
+    const v6 = actions.filter((a) => a.family === 'inet6' && a.kind === 'split');
+    assert.equal(v6.length, 2);
+    assert.deepEqual(v6.map((a) => `${a.dest}/${a.prefix}`).sort(), ['8000::/1', '::/1']);
+    for (const a of v6) {
+      assert.equal(a.gw, 'fe80::1%en0');
+      assert.equal(a.iface, 'en0');
+    }
+  });
+
+  it('inverse skips inet6 /1 when no LAN inet6 gateway', () => {
+    const actions = planInverse(sampleDetect());
+    assert.equal(actions.some((a) => a.family === 'inet6'), false);
+    assert.equal(actions.filter((a) => a.kind === 'split').length, 2);
+  });
 });

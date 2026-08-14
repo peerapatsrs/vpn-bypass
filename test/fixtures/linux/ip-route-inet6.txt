@@ -1,0 +1,5 @@
+default via fe80::aaaa:bbbb:cccc:dddd dev tun0 metric 50
+default via fe80::1 dev eth0 proto ra metric 1024
+::/1 via fe80::1 dev eth0
+8000::/1 via fe80::1 dev eth0
+fe80::/64 dev eth0 proto kernel metric 256 pref medium

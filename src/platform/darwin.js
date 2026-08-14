@@ -1,27 +1,89 @@
 'use strict';
 
 const { createExec } = require('./exec');
-const { parseDarwinNetstat, parseIfconfig, inferTopology } = require('./common');
-const { unixIsAdmin, cidrArg, ignoreExists, ignoreMissing } = require('./mutate');
-const { assertSafeIpv4, assertSafePrefix, assertSafeIface } = require('../core/net');
+const {
+  parseDarwinNetstat, parseDarwinNetstat6, parseIfconfig, inferTopology, inferIpv6,
+} = require('./common');
+const { unixIsAdmin, cidrArg, ignoreExists, ignoreMissing, addOrChange } = require('./mutate');
+const {
+  assertSafeIpv4, assertSafeIpv6, assertSafePrefix, assertSafePrefix6, assertSafeIface, familyOf,
+} = require('../core/net');
 const { parseLsofFields, stdoutOrEmpty } = require('./connections');
+const dnsDarwin = require('./dnsDarwin');
 
 const NETSTAT = '/usr/sbin/netstat';
 const IFCONFIG = '/sbin/ifconfig';
 const ROUTE = '/sbin/route';
 const LSOF = '/usr/sbin/lsof';
 
+function inet6Args(route, op) {
+  assertSafeIpv6(route.dest);
+  const prefix = route.prefix == null ? 128 : route.prefix;
+  assertSafePrefix6(prefix);
+  const args = prefix === 128
+    ? ['-n', op, '-inet6', '-host', route.dest]
+    : ['-n', op, '-inet6', '-net', `${route.dest}/${prefix}`];
+  if (route.gw) {
+    assertSafeIpv6(route.gw);
+    args.push(route.gw);
+  } else if (route.iface) {
+    assertSafeIface(route.iface);
+    args.push('-interface', route.iface);
+  }
+  return args;
+}
+
+function inetArgs(route, op) {
+  assertSafeIpv4(route.dest);
+  const prefix = route.prefix == null ? 32 : route.prefix;
+  assertSafePrefix(prefix);
+  const args = prefix === 32
+    ? ['-n', op, '-host', route.dest]
+    : ['-n', op, '-net', cidrArg({ dest: route.dest, prefix })];
+  if ((route.kind === 'allow-vpn' || route.kind === 'vpn-keep') && route.iface && op !== 'delete') {
+    assertSafeIface(route.iface);
+    args.push('-interface', route.iface);
+  } else if (route.gw && op !== 'delete') {
+    assertSafeIpv4(route.gw);
+    args.push(route.gw);
+  } else if (route.iface && op !== 'delete') {
+    assertSafeIface(route.iface);
+    args.push('-interface', route.iface);
+  }
+  return args;
+}
+
+function mutateArgs(route, op) {
+  return familyOf(route) === 'inet6' ? inet6Args(route, op) : inetArgs(route, op);
+}
+
 function create(execImpl, opts = {}) {
   const exec = createExec(execImpl);
   const isAdmin = opts.isAdmin || unixIsAdmin(opts.getuid);
 
-  async function listRoutes() {
+  async function listRoutes4() {
     const { stdout } = await exec(NETSTAT, ['-rn', '-f', 'inet']);
     return parseDarwinNetstat(stdout);
   }
 
+  async function listRoutes6() {
+    try {
+      const { stdout } = await exec(NETSTAT, ['-rn', '-f', 'inet6']);
+      return parseDarwinNetstat6(stdout);
+    } catch {
+      return [];
+    }
+  }
+
+  async function listRoutes() {
+    const v4 = await listRoutes4();
+    const v6 = await listRoutes6();
+    return v4.concat(v6);
+  }
+
   async function detect() {
     let routes = [];
+    let routes6 = [];
     let ifaces = [];
     try {
       const net = await exec(NETSTAT, ['-rn', '-f', 'inet']);
@@ -30,55 +92,52 @@ function create(execImpl, opts = {}) {
       routes = [];
     }
     try {
+      const net6 = await exec(NETSTAT, ['-rn', '-f', 'inet6']);
+      routes6 = parseDarwinNetstat6(net6.stdout);
+    } catch {
+      routes6 = [];
+    }
+    try {
       const ic = await exec(IFCONFIG, []);
       ifaces = parseIfconfig(ic.stdout);
     } catch {
       ifaces = [];
     }
-    return inferTopology(routes, ifaces, 'darwin');
+    return inferIpv6(routes6, inferTopology(routes, ifaces, 'darwin'));
   }
 
   async function addCidr(route) {
-    assertSafeIpv4(route.dest);
-    assertSafePrefix(route.prefix);
-    if (route.gw) assertSafeIpv4(route.gw);
-    const args = ['-n', 'add', '-net', cidrArg(route)];
-    if ((route.kind === 'allow-vpn' || route.kind === 'vpn-keep') && route.iface) {
-      assertSafeIface(route.iface);
-      args.push('-interface', route.iface);
-    } else if (route.gw) {
-      args.push(route.gw);
-    } else if (route.iface) {
-      assertSafeIface(route.iface);
-      args.push('-interface', route.iface);
-    }
-    await ignoreExists(() => exec(ROUTE, args));
+    await addOrChange(
+      () => exec(ROUTE, mutateArgs(route, 'add')),
+      () => exec(ROUTE, mutateArgs(route, 'change')),
+    );
   }
 
   async function addHost(route) {
-    assertSafeIpv4(route.dest);
-    const args = ['-n', 'add', '-host', route.dest];
-    if (route.kind === 'allow-vpn' && route.iface) {
-      assertSafeIface(route.iface);
-      args.push('-interface', route.iface);
-    } else if (route.gw) {
-      assertSafeIpv4(route.gw);
-      args.push(route.gw);
-    } else if (route.iface) {
-      assertSafeIface(route.iface);
-      args.push('-interface', route.iface);
+    const host = { ...route, prefix: familyOf(route) === 'inet6' ? 128 : 32 };
+    await addOrChange(
+      () => exec(ROUTE, mutateArgs(host, 'add')),
+      () => exec(ROUTE, mutateArgs(host, 'change')),
+    );
+  }
+
+  async function changeCidr(route) {
+    try {
+      await exec(ROUTE, mutateArgs(route, 'change'));
+    } catch (err) {
+      await ignoreExists(() => exec(ROUTE, mutateArgs(route, 'add')));
     }
-    await ignoreExists(() => exec(ROUTE, args));
+  }
+
+  async function changeHost(route) {
+    const host = { ...route, prefix: familyOf(route) === 'inet6' ? 128 : 32 };
+    return changeCidr(host);
   }
 
   async function del(route) {
-    assertSafeIpv4(route.dest);
-    const prefix = route.prefix == null ? 32 : route.prefix;
-    assertSafePrefix(prefix);
-    const args = prefix === 32
-      ? ['-n', 'delete', '-host', route.dest]
-      : ['-n', 'delete', '-net', `${route.dest}/${prefix}`];
-    await ignoreMissing(() => exec(ROUTE, args));
+    const copy = { ...route };
+    if (copy.prefix == null) copy.prefix = familyOf(copy) === 'inet6' ? 128 : 32;
+    await ignoreMissing(() => exec(ROUTE, mutateArgs(copy, 'delete')));
   }
 
   async function listConnections() {
@@ -90,7 +149,31 @@ function create(execImpl, opts = {}) {
     return parseLsofFields(stdout);
   }
 
-  return { detect, listRoutes, listConnections, addCidr, addHost, del, isAdmin, parseRoutes: parseDarwinNetstat };
+  const dns = dnsDarwin.create({
+    exec,
+    startForwarder: opts.startForwarder,
+    stopForwarder: opts.stopForwarder,
+    etcResolverDir: opts.etcResolverDir,
+    spawnImpl: opts.spawnImpl,
+  });
+
+  return {
+    detect,
+    listRoutes,
+    listConnections,
+    addCidr,
+    addHost,
+    changeCidr,
+    changeHost,
+    del,
+    isAdmin,
+    parseRoutes: parseDarwinNetstat,
+    readDns: dns.readDns,
+    applyDns: dns.applyDns,
+    restoreDns: dns.restoreDns,
+    inspectDns: dns.inspectDns,
+    dnsStatus: dns.dnsStatus,
+  };
 }
 
 module.exports = { create, parseRoutes: parseDarwinNetstat, parseIfconfig };

@@ -5,9 +5,9 @@ const {
   getPaths, loadConfig, saveConfig, loadState, saveState, publicConfig,
 } = require('./config');
 const { getPlatform } = require('../platform');
-const { on, off, repairOwned } = require('./apply');
-const { probeHost, resolveHostIps, defaultResolve4, defaultProbeTls } = require('./probe');
-const { expandWwwApex, uniqueKeep, validateTarget, routeKey } = require('./net');
+const { on, off, repairOwned, inspectOwned, createRepairLimiter, SESSION_REPAIR_MS, CLI_WATCH_MS } = require('./apply');
+const { probeHost, resolveHostIps, defaultResolve4, defaultProbeTls, createLanResolve4 } = require('./probe');
+const { expandWwwApex, uniqueKeep, validateTarget, routeKey, isIpv4 } = require('./net');
 const { bestRoute, annotateRoute } = require('./match');
 const { createTrafficTracker } = require('./traffic');
 const { warningList, normalizeLocale, t } = require('../i18n');
@@ -29,6 +29,34 @@ class Service {
     this.localeOverride = normalizeLocale(opts.locale);
     this.watch = createWatch();
     this.traffic = createTrafficTracker({ reverseDns: opts.reverseDns });
+    this.sessionRepair = false;
+    this.repairLimiter = createRepairLimiter();
+    this.elevate = opts.elevate || null;
+    this._customResolve = typeof opts.resolveDns === 'function';
+    this._resolveDnsInner = opts.resolveDns || defaultResolve4;
+    this.resolveDns = (host) => this._resolveNamed(host);
+  }
+
+  async _resolveNamed(host) {
+    let ips;
+    if (this._customResolve) {
+      ips = await this._resolveDnsInner(host);
+    } else {
+      let lanGw = null;
+      try {
+        const detect = await this.platform.detect();
+        lanGw = detect && detect.lan && detect.lan.gw;
+      } catch {
+        lanGw = null;
+      }
+      const lan = createLanResolve4(lanGw, this._resolveDnsInner);
+      ips = await lan(host);
+    }
+    const list = Array.isArray(ips) ? ips : [];
+    for (const ip of list) {
+      if (isIpv4(ip)) this.traffic.rememberName(ip, host);
+    }
+    return ips;
   }
 
   locale() {
@@ -51,19 +79,97 @@ class Service {
     } catch {
       hasAdmin = false;
     }
-    const watchOn = Boolean(cfg.watch && state.applied && this.watch.isRunning());
+    const watchPersisted = Boolean(cfg.watch && state.applied && this.watch.isRunning());
+    const helperUp = Boolean(this.elevate && typeof this.elevate.isHelperRunning === 'function' && this.elevate.isHelperRunning());
+    const canElevate = Boolean(this.elevate && typeof this.elevate.supported === 'function' && this.elevate.supported());
+    const repairActive = Boolean(
+      this.sessionRepair && state.applied && this.watch.isRunning() && (hasAdmin || helperUp),
+    );
+    let hijacked = false;
+    let missingOwned = 0;
+    if (state.applied) {
+      try {
+        let routes = detect.routes || [];
+        if (typeof this.platform.listRoutes === 'function') {
+          try {
+            routes = await this.platform.listRoutes();
+          } catch {
+            routes = detect.routes || [];
+          }
+        }
+        const inspected = inspectOwned(state.ownedRoutes, routes, detect);
+        hijacked = inspected.hijacked.length > 0;
+        missingOwned = inspected.missing.length;
+      } catch {
+        hijacked = false;
+      }
+    }
     const lan = detect.lan || {};
     const vpn = detect.vpn || {};
     const ifaces = detect.ifaces || [];
+    let dns = {
+      mode: 'none',
+      lanServers: [],
+      vpnServers: [],
+      suffixes: [],
+      listen: null,
+      warning: null,
+      hijacked: false,
+    };
+    if (typeof this.platform.dnsStatus === 'function') {
+      try {
+        const live = await this.platform.dnsStatus(detect, state.ownedDns);
+        dns = {
+          mode: live.mode || (state.ownedDns && state.ownedDns.mode) || 'none',
+          method: live.method || (state.ownedDns && state.ownedDns.method) || null,
+          lanServers: live.lanServers || [],
+          vpnServers: live.vpnServers || [],
+          suffixes: live.suffixes || [],
+          listen: live.listen || null,
+          warning: live.warning || (state.ownedDns && state.ownedDns.warning) || null,
+          hijacked: live.ok === false,
+        };
+      } catch {
+        if (state.ownedDns) {
+          dns = {
+            mode: state.ownedDns.mode || 'none',
+            method: state.ownedDns.method || null,
+            lanServers: state.ownedDns.lanServers || [],
+            vpnServers: state.ownedDns.vpnServers || [],
+            suffixes: state.ownedDns.suffixes || [],
+            listen: state.ownedDns.listen || null,
+            warning: state.ownedDns.warning || null,
+            hijacked: false,
+          };
+        }
+      }
+    } else if (state.ownedDns) {
+      dns = {
+        mode: state.ownedDns.mode || 'none',
+        method: state.ownedDns.method || null,
+        lanServers: state.ownedDns.lanServers || [],
+        vpnServers: state.ownedDns.vpnServers || [],
+        suffixes: state.ownedDns.suffixes || [],
+        listen: state.ownedDns.listen || null,
+        warning: state.ownedDns.warning || null,
+        hijacked: false,
+      };
+    }
     return {
       os: detect.os || process.platform,
       hasAdmin,
+      canElevate,
+      helperUp,
       mode: state.applied ? state.mode : cfg.mode,
       applied: Boolean(state.applied),
-      watch: watchOn,
-      watchActive: watchOn,
+      watch: watchPersisted,
+      watchActive: watchPersisted,
+      repairActive,
+      hijacked,
+      missingOwned,
+      dns,
       locale,
-      warnings: warningList(locale),
+      warnings: warningList(locale, { os: detect.os || process.platform, dns }),
       ifaces,
       lan,
       vpn,
@@ -120,7 +226,7 @@ class Service {
       resolveDns: this.resolveDns,
     });
     const cfg = loadConfig(this.paths);
-    if (!opts.dryRun && cfg.watch) this._ensureWatch();
+    if (!opts.dryRun && (cfg.watch || this.sessionRepair)) this._ensureWatch();
     return result;
   }
 
@@ -218,8 +324,6 @@ class Service {
   }
 
   async allowHost(host) {
-    const admin = await this.platform.isAdmin();
-    requireAdmin(admin);
     const parsed = validateTarget(host);
     const cfg = loadConfig(this.paths);
     const allowViaVpn = uniqueKeep(cfg.allowViaVpn.concat([parsed.value]));
@@ -228,6 +332,8 @@ class Service {
     if (state.applied) {
       const detect = await this.platform.detect();
       if (!detect.vpn || !detect.vpn.up) throw fail('ENOTVPN', 'VPN is not up');
+      const admin = await this.platform.isAdmin();
+      requireAdmin(admin);
       const resolved = await resolveHostIps(parsed.value, this.resolveDns);
       const added = [];
       for (const ip of resolved.ips) {
@@ -256,14 +362,16 @@ class Service {
   }
 
   async denyHost(host) {
-    const admin = await this.platform.isAdmin();
-    requireAdmin(admin);
     const parsed = validateTarget(host);
     const cfg = loadConfig(this.paths);
     const allowViaVpn = cfg.allowViaVpn.filter((h) => h !== parsed.value);
     saveConfig(this.paths, { ...cfg, allowViaVpn });
     const state = loadState(this.paths);
     const removed = (state.ownedRoutes || []).filter((r) => r.kind === 'allow-vpn' && r.domain === parsed.value);
+    if (removed.length) {
+      const admin = await this.platform.isAdmin();
+      requireAdmin(admin);
+    }
     for (const route of removed) {
       await this.platform.del(route);
     }
@@ -291,14 +399,42 @@ class Service {
     this.watch.stop();
     saveConfig(this.paths, { ...cfg, watch: false });
     saveState(this.paths, { ...state, watchEnabled: false });
+    if (this.sessionRepair) this._ensureWatch();
     log.record('info', 'watch off');
     return { enabled: false };
   }
 
   _ensureWatch(unref = true) {
+    const interval = this.sessionRepair ? SESSION_REPAIR_MS : CLI_WATCH_MS;
     this.watch.start(async () => {
-      await repairOwned({ paths: this.paths, platform: this.platform });
-    }, 8000, { unref });
+      let admin = false;
+      try {
+        admin = await this.platform.isAdmin();
+      } catch {
+        admin = false;
+      }
+      if (admin) {
+        await repairOwned({
+          paths: this.paths,
+          platform: this.platform,
+          session: this.sessionRepair,
+          limiter: this.repairLimiter,
+        });
+        return;
+      }
+      if (this.elevate && typeof this.elevate.isHelperRunning === 'function' && this.elevate.isHelperRunning()) {
+        try {
+          await this.elevate.run({ cmd: 'repair' });
+        } catch {
+          // helper gone; next mutate will prompt again
+        }
+      }
+    }, interval, { unref });
+  }
+
+  enableSessionRepair() {
+    this.sessionRepair = true;
+    this._ensureWatch(true);
   }
 
   startWatchLoop({ unref = false } = {}) {

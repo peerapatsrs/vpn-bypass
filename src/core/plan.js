@@ -8,6 +8,11 @@ const SPLIT_HALVES = [
   { dest: '128.0.0.0', prefix: 1 },
 ];
 
+const SPLIT_HALVES6 = [
+  { dest: '::', prefix: 1 },
+  { dest: '8000::', prefix: 1 },
+];
+
 const RFC1918 = [
   { dest: '10.0.0.0', prefix: 8 },
   { dest: '172.16.0.0', prefix: 12 },
@@ -33,7 +38,24 @@ function lanProtectAction(detect, lanGw) {
     iface: null,
     kind: 'lan-protect',
     domain: null,
+    family: 'inet',
   };
+}
+
+function planInverse6(detect) {
+  const lan = (detect && detect.lan) || {};
+  const gw6 = lan.gw6;
+  if (!gw6) return [];
+  return SPLIT_HALVES6.map((h) => ({
+    op: 'addCidr',
+    dest: h.dest,
+    prefix: h.prefix,
+    gw: gw6,
+    iface: lan.iface || null,
+    kind: 'split',
+    domain: null,
+    family: 'inet6',
+  }));
 }
 
 function skipVpnKeepCidr(detect, dest, prefix) {
@@ -68,6 +90,7 @@ function planVpnKeep(detect) {
       iface: vpn.iface || c.iface || null,
       kind: 'vpn-keep',
       domain: null,
+      family: 'inet',
     });
   }
   return actions;
@@ -83,7 +106,9 @@ function planInverse(detect, { lanProtect = true } = {}) {
     iface: null,
     kind: 'split',
     domain: null,
+    family: 'inet',
   }));
+  actions.push(...planInverse6(detect));
   actions.push(...planVpnKeep(detect));
   if (lanProtect) {
     const protect = lanProtectAction(detect, lanGw);
@@ -102,6 +127,7 @@ function planDomains(detect, resolvedHosts) {
     iface: null,
     kind: 'domain',
     domain: h.domain || null,
+    family: 'inet',
   }));
 }
 
@@ -115,6 +141,7 @@ function planAllowVpn(detect, resolvedHosts) {
     iface: vpn.iface || null,
     kind: 'allow-vpn',
     domain: h.domain || h.host || null,
+    family: 'inet',
   }));
 }
 
@@ -144,9 +171,11 @@ function plan({
 
 module.exports = {
   SPLIT_HALVES,
+  SPLIT_HALVES6,
   RFC1918,
   plan,
   planInverse,
+  planInverse6,
   planVpnKeep,
   planDomains,
   planAllowVpn,

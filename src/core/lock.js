@@ -50,4 +50,4 @@ async function withLock(lockPath, fn) {
   }
 }
 
-module.exports = { withLock };
+module.exports = { withLock, pidAlive };

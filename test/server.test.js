@@ -31,8 +31,13 @@ describe('server bind + API', () => {
       assert.equal(res.ok, true);
       assert.equal(res.data.locale, 'en');
       assert.equal(typeof res.data.hasAdmin, 'boolean');
+      assert.equal(typeof res.data.canElevate, 'boolean');
       assert.ok(Array.isArray(res.data.warnings));
       assert.ok(Array.isArray(res.data.ifaces));
+      assert.equal(typeof res.data.repairActive, 'boolean');
+      assert.equal(typeof res.data.hijacked, 'boolean');
+      assert.ok(res.data.dns);
+      assert.equal(typeof res.data.dns.mode, 'string');
       assert.equal(Object.prototype.hasOwnProperty.call(res.data, 'lanIp'), false);
     } finally {
       await close(server);

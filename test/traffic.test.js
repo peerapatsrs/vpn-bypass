@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const { parseLsofFields, parseSs, parseNetstatTcp } = require('../src/platform/connections');
 const { classifyConnection } = require('../src/core/match');
-const { isWebConnection, classifyLive } = require('../src/core/traffic');
+const { isWebConnection, classifyLive, createTrafficTracker } = require('../src/core/traffic');
 const { Service } = require('../src/core/service');
 const { tmpHome, mockPlatform, sampleDetect } = require('./helpers');
 
@@ -85,5 +85,21 @@ nTCP 192.168.1.42:51236->1.1.1.1:443 (ESTABLISHED)
     ]);
     assert.equal(live.length, 1);
     assert.deepEqual(live[0].ports, [443]);
+  });
+
+  it('prefers forward A-cache names over CDN PTR', async () => {
+    const tracker = createTrafficTracker({
+      reverseDns: async () => 'a.cdn.cloudfront.net',
+    });
+    tracker.rememberName('57.144.160.1', 'www.facebook.com');
+    const snap = tracker.snapshot(DETECT, [
+      { ip: '57.144.160.1', port: 443, localIp: '192.168.1.42', localPort: 1, process: 'Google' },
+    ]);
+    assert.equal(snap.live[0].host, 'www.facebook.com');
+    await new Promise((r) => setTimeout(r, 20));
+    const again = tracker.snapshot(DETECT, [
+      { ip: '57.144.160.1', port: 443, localIp: '192.168.1.42', localPort: 1, process: 'Google' },
+    ]);
+    assert.equal(again.live[0].host, 'www.facebook.com');
   });
 });

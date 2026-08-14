@@ -4,9 +4,13 @@ const { fail } = require('./errors');
 const { withLock } = require('./lock');
 const { loadConfig, saveConfig, loadState, saveState } = require('./config');
 const { plan } = require('./plan');
-const { routeKey } = require('./net');
+const { routeKey, familyOf, gwEqual } = require('./net');
 const { resolveHostIps, defaultResolve4 } = require('./probe');
+const { buildSplitDnsPlan, sanitizeOwnedDns } = require('./dns');
 const log = require('./log');
+
+const SESSION_REPAIR_MS = 3000;
+const CLI_WATCH_MS = 8000;
 
 function ledgerEntry(action) {
   return {
@@ -16,15 +20,99 @@ function ledgerEntry(action) {
     iface: action.iface || null,
     kind: action.kind || null,
     domain: action.domain || null,
+    family: familyOf(action),
   };
 }
 
-async function execAction(platform, action) {
-  if (action.op === 'addHost' || action.prefix === 32) {
-    await platform.addHost(action);
-  } else {
-    await platform.addCidr(action);
+function destMatch(a, b) {
+  return (
+    a.dest === b.dest
+    && Number(a.prefix) === Number(b.prefix)
+    && familyOf(a) === familyOf(b)
+  );
+}
+
+function viaOk(owned, current, detect) {
+  const kind = owned.kind;
+  const lan = (detect && detect.lan) || {};
+  const vpn = (detect && detect.vpn) || {};
+  if (kind === 'split' || kind === 'lan-protect' || kind === 'domain') {
+    const wantGw = familyOf(owned) === 'inet6' ? (owned.gw || lan.gw6) : (owned.gw || lan.gw);
+    if (wantGw && current.gw && gwEqual(wantGw, current.gw)) return true;
+    if (lan.iface && current.iface === lan.iface) return true;
+    return false;
   }
+  if (kind === 'vpn-keep' || kind === 'allow-vpn') {
+    if (vpn.iface && current.iface === vpn.iface) return true;
+    if (owned.iface && current.iface === owned.iface) return true;
+    if (owned.gw && current.gw && gwEqual(owned.gw, current.gw)) return true;
+    return false;
+  }
+  return true;
+}
+
+function inspectOwned(ownedRoutes, current, detect) {
+  const missing = [];
+  const hijacked = [];
+  for (const owned of ownedRoutes || []) {
+    const matches = (current || []).filter((r) => destMatch(r, owned));
+    if (!matches.length) missing.push(owned);
+    else if (!matches.some((r) => viaOk(owned, r, detect))) hijacked.push(owned);
+  }
+  return {
+    missing,
+    hijacked,
+    ok: missing.length === 0 && hijacked.length === 0,
+  };
+}
+
+function createRepairLimiter(opts = {}) {
+  const settleMs = opts.settleMs == null ? 4000 : opts.settleMs;
+  const windowMs = opts.windowMs == null ? 60000 : opts.windowMs;
+  const maxPerWindow = opts.maxPerWindow == null ? 3 : opts.maxPerWindow;
+  const clock = typeof opts.now === 'function' ? opts.now : () => Date.now();
+  let lastMutateAt = 0;
+  let windowStart = 0;
+  let count = 0;
+  return {
+    allow() {
+      const n = clock();
+      if (lastMutateAt && n - lastMutateAt < settleMs) return 'settle';
+      if (!windowStart || n - windowStart > windowMs) {
+        windowStart = n;
+        count = 0;
+      }
+      if (count >= maxPerWindow) return 'backoff';
+      return null;
+    },
+    record() {
+      lastMutateAt = clock();
+      count += 1;
+    },
+    reset() {
+      lastMutateAt = 0;
+      windowStart = 0;
+      count = 0;
+    },
+  };
+}
+
+async function execAction(platform, action, opts = {}) {
+  const replace = Boolean(opts && opts.replace);
+  const wantsChange = replace && typeof platform.changeCidr === 'function';
+  if (action.op === 'addHost' || Number(action.prefix) === 32 || Number(action.prefix) === 128) {
+    if (wantsChange && typeof platform.changeHost === 'function') {
+      await platform.changeHost(action);
+      return;
+    }
+    await platform.addHost(action);
+    return;
+  }
+  if (wantsChange) {
+    await platform.changeCidr(action);
+    return;
+  }
+  await platform.addCidr(action);
 }
 
 async function resolveList(hosts, resolveDns) {
@@ -99,6 +187,7 @@ async function on(opts) {
         via: a.gw,
         gateway: a.gw,
       }));
+      const dns = mode === 'inverse' ? buildSplitDnsPlan(detect, null) : null;
       return {
         dryRun: true,
         mode,
@@ -106,6 +195,7 @@ async function on(opts) {
         routes,
         plan: routes,
         detect,
+        dns,
       };
     }
 
@@ -118,11 +208,47 @@ async function on(opts) {
     await removeRoutes(platform, extra);
     await applyActions(platform, built.actions);
 
+    let ownedDns = null;
+    if (mode === 'inverse' && typeof platform.applyDns === 'function') {
+      try {
+        const preserve = prev.ownedDns && Array.isArray(prev.ownedDns.previous)
+          ? prev.ownedDns.previous
+          : undefined;
+        ownedDns = sanitizeOwnedDns(await platform.applyDns({
+          detect,
+          paths,
+          previous: preserve,
+          reapply: Boolean(prev.ownedDns),
+          pid: prev.ownedDns && prev.ownedDns.pid,
+        }));
+        if (ownedDns && ownedDns.mode === 'split') {
+          log.record('info', `dns split ${ownedDns.method || ''} lan ${(ownedDns.lanServers || []).join(',')} vpn ${(ownedDns.vpnServers || []).join(',')} suffixes ${(ownedDns.suffixes || []).join(',')}`);
+        } else if (ownedDns && ownedDns.warning) {
+          log.record('info', `dns ${ownedDns.mode}: ${ownedDns.warning}`);
+        }
+      } catch (err) {
+        log.record('info', `dns split skipped: ${err && err.message ? err.message : err}`);
+        ownedDns = sanitizeOwnedDns({
+          mode: 'skipped',
+          warning: err && err.message ? err.message : 'dns apply failed',
+        });
+      }
+    } else if (mode !== 'inverse' && prev.ownedDns && typeof platform.restoreDns === 'function') {
+      try {
+        await platform.restoreDns(prev.ownedDns);
+        log.record('info', 'dns restored (domains mode does not split system DNS)');
+      } catch (err) {
+        ownedDns = prev.ownedDns;
+        log.record('info', `dns restore failed: ${err && err.message ? err.message : err}`);
+      }
+    }
+
     const nextCfg = saveConfig(paths, { ...cfg, mode });
     const state = saveState(paths, {
       applied: true,
       mode,
       ownedRoutes: desired,
+      ownedDns,
       watchEnabled: nextCfg.watch,
     });
     log.record('info', `applied ${mode} (${desired.length} routes)`);
@@ -144,6 +270,7 @@ async function on(opts) {
       plan: routes,
       detect,
       state,
+      dns: ownedDns,
     };
   });
 }
@@ -163,6 +290,17 @@ async function off(opts) {
   return withLock(paths.lock, async () => {
     const latest = loadState(paths);
     const routes = latest.ownedRoutes || [];
+    const ownedDns = latest.ownedDns;
+    let dnsErr = null;
+    if (ownedDns && typeof platform.restoreDns === 'function') {
+      try {
+        await platform.restoreDns(ownedDns);
+        log.record('info', 'dns restored from ledger');
+      } catch (err) {
+        dnsErr = err;
+        log.record('info', `dns restore failed: ${err && err.message ? err.message : err}`);
+      }
+    }
     await removeRoutes(platform, routes);
     const cfg = loadConfig(paths);
     saveConfig(paths, { ...cfg, watch: false });
@@ -170,43 +308,101 @@ async function off(opts) {
       applied: false,
       mode: latest.mode,
       ownedRoutes: [],
+      ownedDns: dnsErr ? ownedDns : null,
       watchEnabled: false,
     });
     log.record('info', `off removed ${routes.length} owned routes`);
-    return { dryRun: false, removed: routes };
+    if (dnsErr) throw dnsErr;
+    return { dryRun: false, removed: routes, dnsRestored: Boolean(ownedDns && !dnsErr) };
   });
 }
 
 async function repairOwned(opts) {
-  const { paths, platform } = opts;
+  const { paths, platform, session = false, limiter } = opts;
   const state = loadState(paths);
   const cfg = loadConfig(paths);
   if (!state.applied) return { skipped: 'off' };
-  if (!cfg.watch && !state.watchEnabled) return { skipped: 'watch-off' };
+  if (!session && !cfg.watch && !state.watchEnabled) return { skipped: 'watch-off' };
   const detect = await platform.detect();
   if (!detect.vpn || !detect.vpn.up) return { skipped: 'vpn-down' };
   const admin = await platform.isAdmin();
   if (!admin) return { skipped: 'epriv' };
 
   const current = await platform.listRoutes();
-  const missing = [];
-  for (const owned of state.ownedRoutes || []) {
-    const found = current.some((r) => r.dest === owned.dest && Number(r.prefix) === Number(owned.prefix));
-    if (!found) missing.push(owned);
+  const inspected = inspectOwned(state.ownedRoutes, current, detect);
+  let dnsInspect = { ok: true };
+  if (state.ownedDns && typeof platform.inspectDns === 'function') {
+    try {
+      dnsInspect = await platform.inspectDns(state.ownedDns);
+    } catch {
+      dnsInspect = { ok: true };
+    }
   }
-  for (const route of missing) {
-    const action = { ...route, op: route.prefix === 32 ? 'addHost' : 'addCidr' };
-    await execAction(platform, action);
+  if (inspected.ok && dnsInspect.ok) return { repaired: 0, hijacked: 0, dnsRepaired: 0 };
+
+  if (limiter) {
+    const blocked = limiter.allow();
+    if (blocked) {
+      return {
+        skipped: blocked,
+        hijacked: inspected.hijacked.length,
+        missing: inspected.missing.length,
+        dnsHijacked: dnsInspect.ok === false,
+      };
+    }
   }
-  if (missing.length) log.record('info', `watch repaired ${missing.length} routes`);
-  return { repaired: missing.length };
+
+  const pending = inspected.missing.concat(inspected.hijacked);
+  try {
+    await withLock(paths.lock, async () => {
+      for (const route of pending) {
+        const action = {
+          ...route,
+          op: (route.prefix === 32 || route.prefix === 128) ? 'addHost' : 'addCidr',
+        };
+        const replace = inspected.hijacked.some((h) => destMatch(h, route));
+        await execAction(platform, action, { replace });
+      }
+      if (dnsInspect.ok === false && typeof platform.applyDns === 'function') {
+        const nextDns = sanitizeOwnedDns(await platform.applyDns({
+          detect,
+          paths,
+          previous: state.ownedDns.previous,
+          reapply: true,
+          pid: state.ownedDns.pid,
+        }));
+        const latest = loadState(paths);
+        saveState(paths, { ...latest, ownedDns: nextDns });
+        log.record('info', 'watch repaired DNS (VPN client overwrote resolver)');
+      }
+    });
+  } catch (err) {
+    if (err && err.code === 'ELOCK') return { skipped: 'lock', hijacked: inspected.hijacked.length };
+    throw err;
+  }
+  if (limiter) limiter.record();
+  if (pending.length) {
+    log.record('info', `watch repaired ${pending.length} routes (${inspected.hijacked.length} overwritten)`);
+  }
+  return {
+    repaired: pending.length,
+    hijacked: inspected.hijacked.length,
+    missing: inspected.missing.length,
+    dnsRepaired: dnsInspect.ok === false ? 1 : 0,
+  };
 }
 
 module.exports = {
   on,
   off,
   repairOwned,
+  inspectOwned,
+  createRepairLimiter,
   buildPlan,
   staleRoutes,
   ledgerEntry,
+  destMatch,
+  viaOk,
+  SESSION_REPAIR_MS,
+  CLI_WATCH_MS,
 };

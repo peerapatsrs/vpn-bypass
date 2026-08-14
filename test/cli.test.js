@@ -21,6 +21,8 @@ describe('cli parse + i18n', () => {
     const l = parseArgv(['lang', 'th']);
     assert.equal(l.command, 'lang');
     assert.deepEqual(l.args, ['th']);
+    const h = parseArgv(['elevate-helper']);
+    assert.equal(h.command, 'elevate-helper');
   });
 
   it('default locale is th and messages exist in both languages', () => {
@@ -32,6 +34,17 @@ describe('cli parse + i18n', () => {
     assert.match(t('en', 'confirm.allowVpn', { host: 'x.com' }), /\[y\/N\]/);
     assert.match(t('th', 'error.EPRIV'), /sudo/);
     assert.match(t('en', 'error.EPRIV'), /sudo/);
+    assert.match(t('th', 'error.EACCES'), /chown/);
+    assert.match(t('th', 'error.EACCES'), /whoami/);
+    assert.match(t('en', 'error.EACCES'), /chown -R "\$\(whoami\)" ~\/\.config\/vpn-bypass/);
+    assert.match(t('th', 'status.hijacked'), /ทับ/);
+    assert.match(t('en', 'status.hijacked'), /overwrote/);
+    assert.match(t('th', 'warn.endpoint'), /เอเจนต์/);
+    assert.match(t('en', 'warn.endpoint'), /not invisibility/i);
+    assert.match(t('th', 'warn.dns'), /เน็ตบ้าน/);
+    assert.match(t('en', 'warn.dns'), /home LAN/);
+    assert.match(t('th', 'status.dns.split'), /แยก/);
+    assert.match(t('en', 'status.dns.split'), /split/);
   });
 
   it('config locale defaults to th and can be set', () => {

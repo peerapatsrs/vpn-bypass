@@ -6,7 +6,9 @@ const { parseArgv } = require('./cli');
 const { t, normalizeLocale } = require('./i18n');
 const { Service } = require('./core/service');
 const { startServer, assertLoopbackHost } = require('./server');
-const { AppError } = require('./core/errors');
+const { AppError, fail } = require('./core/errors');
+const { createElevate } = require('./core/elevate');
+const { runElevateHelper } = require('./core/helper');
 const pkg = require('../package.json');
 
 function print(msg) {
@@ -51,6 +53,21 @@ function openBrowser(url) {
   child.unref();
 }
 
+function formatDns(locale, dns) {
+  if (!dns || !dns.mode) return t(locale, 'status.dns.none');
+  const modeKey = `status.dns.${dns.mode}`;
+  let line = t(locale, modeKey);
+  if (line === modeKey) line = String(dns.mode);
+  const bits = [];
+  if (dns.listen) bits.push(dns.listen);
+  if (dns.lanServers && dns.lanServers.length) bits.push(`LAN ${dns.lanServers.join(',')}`);
+  if (dns.vpnServers && dns.vpnServers.length) bits.push(`VPN ${dns.vpnServers.join(',')}`);
+  if (dns.suffixes && dns.suffixes.length) bits.push(dns.suffixes.join(','));
+  if (bits.length) line += ` (${bits.join('; ')})`;
+  if (dns.hijacked) line += ` — ${t(locale, 'status.hijacked')}`;
+  return line;
+}
+
 function yn(locale, v) {
   return v ? t(locale, 'status.yes') : t(locale, 'status.no');
 }
@@ -69,8 +86,11 @@ function formatStatus(locale, st) {
       + (lan.addr ? ` (${lan.addr})` : ''),
     `${t(locale, 'status.mode')}: ${st.mode || '-'}`,
     `${t(locale, 'status.applied')}: ${st.applied ? yn(locale, true) : t(locale, 'status.idle')}`,
+    `${t(locale, 'status.dns')}: ${formatDns(locale, st.dns)}`,
     `${t(locale, 'status.watch')}: ${yn(locale, st.watch)}`,
+    `${t(locale, 'status.repair')}: ${yn(locale, st.repairActive)}`,
     `${t(locale, 'status.locale')}: ${st.locale}`,
+    ...(st.hijacked ? [t(locale, 'status.hijacked')] : []),
     '',
     ...(st.warnings || []),
   ];
@@ -101,8 +121,15 @@ async function main(argv, deps = {}) {
     resolveDns: deps.resolveDns,
     probeTls: deps.probeTls,
   });
-  const cfg = service.getConfig();
-  const locale = normalizeLocale(parsed.lang) || cfg.locale || 'th';
+  let locale = normalizeLocale(parsed.lang) || normalizeLocale(process.env.VPN_BYPASS_LANG) || 'th';
+  let cfg;
+  try {
+    cfg = service.getConfig();
+  } catch (err) {
+    printErr(formatError(locale, err instanceof AppError ? err : err));
+    return err && err.code === 'EPRIV' ? 13 : 1;
+  }
+  locale = normalizeLocale(parsed.lang) || cfg.locale || locale;
   service.localeOverride = locale;
 
   if (parsed.flags.help || parsed.command === 'help' || !parsed.command) {
@@ -139,6 +166,9 @@ async function main(argv, deps = {}) {
           print(t(locale, 'on.dryRun'));
           for (const a of result.actions) {
             print(`  ${a.op} ${a.dest}/${a.prefix} via ${a.gw || a.iface || ''} (${a.kind})`);
+          }
+          if (result.dns) {
+            print(`  dns ${result.dns.mode || ''} lan ${(result.dns.lanServers || []).join(',')} vpn ${(result.dns.vpnServers || []).join(',')} suffixes ${(result.dns.suffixes || []).join(',')}`);
           }
           return 0;
         }
@@ -223,14 +253,37 @@ async function main(argv, deps = {}) {
         await new Promise(() => {});
         return 0;
       }
+      case 'elevate-helper': {
+        const admin = await service.platform.isAdmin();
+        if (!admin) throw fail('EPRIV', 'administrator privileges required');
+        await (deps.runElevateHelper || runElevateHelper)(service);
+        return 0;
+      }
       case 'ui': {
+        if (typeof process.getuid === 'function' && process.getuid() === 0) {
+          throw fail('EACCES', 'UI must run unprivileged; if config is root-owned: sudo chown -R "$(whoami)" ~/.config/vpn-bypass');
+        }
         assertLoopbackHost('127.0.0.1');
+        const elevate = deps.elevate || (deps.createElevate || createElevate)({
+          paths: service.paths,
+          spawnImpl: deps.spawn,
+          platform: process.platform,
+        });
+        service.elevate = elevate;
         const started = await (deps.startServer || startServer)({
           host: '127.0.0.1',
           service,
         });
+        service.enableSessionRepair();
         const url = `http://127.0.0.1:${started.port}`;
         print(t(locale, 'ui.hint', { url, token: started.token }));
+        const stopHelper = () => {
+          if (elevate && typeof elevate.quit === 'function') {
+            elevate.quit().catch(() => {});
+          }
+        };
+        process.once('SIGINT', () => { stopHelper(); process.exit(0); });
+        process.once('SIGTERM', () => { stopHelper(); process.exit(0); });
         try {
           openBrowser(url);
         } catch {
@@ -249,4 +302,4 @@ async function main(argv, deps = {}) {
   }
 }
 
-module.exports = { main, formatStatus, confirmPrompt };
+module.exports = { main, formatStatus, formatDns, confirmPrompt };

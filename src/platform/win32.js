@@ -55,7 +55,7 @@ function detectFromPrint(text) {
 
 function create(execImpl, opts = {}) {
   const { createExec } = require('./exec');
-  const { ignoreExists, ignoreMissing, winMask } = require('./mutate');
+  const { ignoreExists, ignoreMissing, addOrChange, winMask } = require('./mutate');
   const { assertSafeIpv4, assertSafePrefix } = require('../core/net');
   const { parseNetstatTcp, stdoutOrEmpty } = require('./connections');
   const exec = createExec(execImpl);
@@ -90,13 +90,39 @@ function create(execImpl, opts = {}) {
     assertSafeIpv4(route.dest);
     assertSafePrefix(route.prefix);
     if (route.gw) assertSafeIpv4(route.gw);
-    await ignoreExists(() => exec('route', ['add', route.dest, 'mask', winMask(route), route.gw || '0.0.0.0']));
+    const gw = route.gw || '0.0.0.0';
+    const mask = winMask(route);
+    await addOrChange(
+      () => exec('route', ['add', route.dest, 'mask', mask, gw]),
+      () => exec('route', ['change', route.dest, 'mask', mask, gw]),
+    );
   }
 
   async function addHost(route) {
     assertSafeIpv4(route.dest);
     if (route.gw) assertSafeIpv4(route.gw);
-    await ignoreExists(() => exec('route', ['add', route.dest, 'mask', '255.255.255.255', route.gw || '0.0.0.0']));
+    const gw = route.gw || '0.0.0.0';
+    await addOrChange(
+      () => exec('route', ['add', route.dest, 'mask', '255.255.255.255', gw]),
+      () => exec('route', ['change', route.dest, 'mask', '255.255.255.255', gw]),
+    );
+  }
+
+  async function changeCidr(route) {
+    assertSafeIpv4(route.dest);
+    assertSafePrefix(route.prefix == null ? 32 : route.prefix);
+    if (route.gw) assertSafeIpv4(route.gw);
+    const gw = route.gw || '0.0.0.0';
+    const mask = winMask(route);
+    try {
+      await exec('route', ['change', route.dest, 'mask', mask, gw]);
+    } catch (err) {
+      await ignoreExists(() => exec('route', ['add', route.dest, 'mask', mask, gw]));
+    }
+  }
+
+  async function changeHost(route) {
+    return changeCidr({ ...route, prefix: 32 });
   }
 
   async function del(route) {
@@ -111,7 +137,17 @@ function create(execImpl, opts = {}) {
     return parseNetstatTcp(stdout);
   }
 
-  return { detect, listRoutes, listConnections, addCidr, addHost, del, isAdmin, parseRoutes: (t) => parseWin32RoutePrint(t).routes };
+  const dns = require('./dnsWin32').create({ exec });
+
+  return {
+    detect, listRoutes, listConnections, addCidr, addHost, changeCidr, changeHost, del, isAdmin,
+    parseRoutes: (t) => parseWin32RoutePrint(t).routes,
+    readDns: dns.readDns,
+    applyDns: dns.applyDns,
+    restoreDns: dns.restoreDns,
+    inspectDns: dns.inspectDns,
+    dnsStatus: dns.dnsStatus,
+  };
 }
 
 module.exports = {

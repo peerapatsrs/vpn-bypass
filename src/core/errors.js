@@ -21,6 +21,7 @@ function httpStatus(code) {
     case 'EPRIV':
     case 'EORIGIN':
     case 'EPERM':
+    case 'EACCES':
       return 403;
     case 'EINVAL':
     case 'EBLOCKED':

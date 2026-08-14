@@ -13,7 +13,6 @@
   --lan: #3cbfa8;
   --vpn: #7f93ae;
   --ok: #6fbf7a;
-  --warn: #e0b15a;
   --danger: #d4654c;
   --danger-bg: #2a1612;
   --info-bg: #1c1912;
@@ -210,9 +209,29 @@ body {
   color: #f0b2a6;
 }
 
+.banner-priv-info {
+  background: var(--info-bg);
+  border-color: var(--line-strong);
+  box-shadow: inset 3px 0 0 var(--copper);
+}
+
+.banner-priv-info h2 {
+  color: var(--copper);
+}
+
 .banner-watch {
   border-color: #3d5a52;
   box-shadow: inset 3px 0 0 var(--lan);
+}
+
+.banner-hijack {
+  background: var(--danger-bg);
+  border-color: #7a3b2e;
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.banner-hijack h2 {
+  color: #f0b2a6;
 }
 
 .card {
@@ -308,8 +327,10 @@ body {
   border-color: transparent;
 }
 
-.pill-off {
-  color: var(--muted);
+.pill-vpn {
+  color: #e8eef6;
+  background: #3a4658;
+  border-color: transparent;
 }
 
 .via {
@@ -537,30 +558,6 @@ code {
 .traffic-recent::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border-radius: 8px;
-}
-
-.warnings {
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-  color: var(--warn);
-  font-size: 0.9rem;
-}
-
-.warnings li {
-  padding: 3px 0 3px 14px;
-  position: relative;
-}
-
-.warnings li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.7em;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--warn);
 }
 
 .mode-stack {

@@ -4,6 +4,18 @@ const { fail } = require('../core/errors');
 const { assertSafeIpv4, assertSafePrefix, assertSafeIface, prefixToMask } = require('../core/net');
 const { isAlreadyExists, isNotInTable } = require('./exec');
 
+async function addOrChange(addFn, changeFn) {
+  try {
+    await addFn();
+  } catch (err) {
+    if (isAlreadyExists(err) && typeof changeFn === 'function') {
+      await changeFn();
+      return;
+    }
+    throw err;
+  }
+}
+
 async function ignoreExists(fn) {
   try {
     await fn();
@@ -70,6 +82,7 @@ function winMask(route) {
 module.exports = {
   ignoreExists,
   ignoreMissing,
+  addOrChange,
   wrapMutations,
   unixIsAdmin,
   cidrArg,

@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { fail, httpStatus, AppError } = require('./core/errors');
 const { t } = require('./i18n');
+const { withElevate } = require('./core/elevate');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -167,11 +168,15 @@ async function routeApi(req, service, url) {
   }
   if (p === '/api/on' && method === 'POST') {
     const body = await parseJsonBody(req);
-    return service.on({ mode: body.mode, dryRun: Boolean(body.dryRun) });
+    if (body.dryRun) return service.on({ mode: body.mode, dryRun: true });
+    return withElevate(service, { cmd: 'on', mode: body.mode }, () => service.on({
+      mode: body.mode,
+      dryRun: false,
+    }));
   }
   if (p === '/api/off' && method === 'POST') {
     await parseJsonBody(req);
-    return service.off();
+    return withElevate(service, { cmd: 'off' }, () => service.off());
   }
   if (p === '/api/domains' && method === 'GET') {
     return { domains: service.listDomains() };
@@ -179,14 +184,22 @@ async function routeApi(req, service, url) {
   if (p === '/api/domains' && method === 'POST') {
     const body = await parseJsonBody(req);
     const host = body.host || body.domain;
-    const domains = await service.addDomain(host);
-    return { domains };
+    return withElevate(
+      service,
+      { cmd: 'on', mode: 'domains' },
+      async () => ({ domains: await service.addDomain(host) }),
+      () => ({ domains: service.listDomains() }),
+    );
   }
   if (p === '/api/domains' && method === 'DELETE') {
     const body = await parseJsonBody(req);
     const host = body.host || body.domain || url.searchParams.get('host');
-    const domains = await service.removeDomain(host);
-    return { domains };
+    return withElevate(
+      service,
+      { cmd: 'on', mode: 'domains' },
+      async () => ({ domains: await service.removeDomain(host) }),
+      () => ({ domains: service.listDomains() }),
+    );
   }
   if (p === '/api/try' && method === 'POST') {
     const body = await parseJsonBody(req);
@@ -194,15 +207,26 @@ async function routeApi(req, service, url) {
   }
   if (p === '/api/allow' && method === 'POST') {
     const body = await parseJsonBody(req);
-    return service.allowHost(body.host);
+    return withElevate(service, { cmd: 'allow', host: body.host }, () => service.allowHost(body.host));
   }
   if (p === '/api/deny' && method === 'POST') {
     const body = await parseJsonBody(req);
-    return service.denyHost(body.host);
+    return withElevate(service, { cmd: 'deny', host: body.host }, () => service.denyHost(body.host));
   }
   if (p === '/api/watch' && method === 'POST') {
     const body = await parseJsonBody(req);
-    return service.setWatch(Boolean(body.enabled));
+    const enabled = Boolean(body.enabled);
+    if (!enabled) {
+      if (service.elevate && typeof service.elevate.isHelperRunning === 'function' && service.elevate.isHelperRunning()) {
+        try {
+          await service.elevate.run({ cmd: 'watch', enabled: false });
+        } catch {
+          // local flag still turns off
+        }
+      }
+      return service.setWatch(false);
+    }
+    return withElevate(service, { cmd: 'watch', enabled: true }, () => service.setWatch(true));
   }
   if (p === '/api/log' && method === 'GET') {
     return { entries: service.getLog() };

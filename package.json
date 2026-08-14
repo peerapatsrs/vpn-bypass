@@ -1,7 +1,7 @@
 {
   "name": "@peerapat.srs/vpn-bypass",
-  "version": "0.1.0",
-  "description": "CLI and localhost UI that split-route IPv4 around a full-tunnel corporate VPN (home LAN for the web, intranet via VPN).",
+  "version": "0.3.0",
+  "description": "CLI and localhost UI that split-route IPv4/IPv6 and split-DNS around a full-tunnel corporate VPN (home LAN for the web, intranet via VPN).",
   "bin": {
     "vpn-bypass": "bin/vpn-bypass.js"
   },
@@ -33,6 +33,8 @@
     "macos",
     "cli",
     "ipv4",
+    "dns",
+    "split-dns",
     "lan"
   ],
   "license": "MIT"

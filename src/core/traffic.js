@@ -130,7 +130,6 @@ function createTrafficTracker(opts = {}) {
       .then((name) => {
         reversePending.delete(ip);
         reverseCache.set(ip, name || null);
-        if (name) rememberName(ip, name);
       })
       .catch(() => {
         reversePending.delete(ip);

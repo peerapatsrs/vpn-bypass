@@ -39,16 +39,51 @@ function mockPlatform(opts = {}) {
   const adds = [];
   const dels = [];
   const listed = opts.listRoutes || [];
+  const dnsApplies = [];
+  const dnsRestores = [];
   return {
     detect: async () => detectSnap,
     listRoutes: async () => listed.slice(),
-    addCidr: async (r) => { adds.push({ op: 'addCidr', ...r }); },
-    addHost: async (r) => { adds.push({ op: 'addHost', ...r }); },
+    addCidr: async (r) => { adds.push({ ...r, op: 'addCidr' }); },
+    addHost: async (r) => { adds.push({ ...r, op: 'addHost' }); },
+    changeCidr: async (r) => { adds.push({ ...r, op: 'changeCidr' }); },
+    changeHost: async (r) => { adds.push({ ...r, op: 'changeHost' }); },
     del: async (r) => { dels.push({ ...r }); },
     isAdmin: async () => (opts.admin == null ? true : Boolean(opts.admin)),
     listConnections: async () => (opts.connections || []).slice(),
+    readDns: async () => opts.dnsSnapshot || {
+      lanServers: ['192.168.1.1'],
+      vpnServers: ['10.243.1.1'],
+      suffixes: ['corp.example'],
+      search: ['corp.example'],
+      resolvers: [],
+      defaultServers: ['10.243.1.1'],
+      services: [{ name: 'Wi-Fi', device: 'en0', disabled: false }],
+    },
+    applyDns: async (o) => {
+      const ledger = opts.applyDnsResult || {
+        mode: 'split',
+        method: 'forwarder',
+        os: 'darwin',
+        pid: 4242,
+        listen: '127.0.0.1',
+        lanServers: ['192.168.1.1'],
+        vpnServers: ['10.243.1.1'],
+        suffixes: ['corp.example'],
+        previous: [{ service: 'Wi-Fi', device: 'en0', servers: ['10.243.1.1'], empty: false, search: ['corp.example'], searchEmpty: false }],
+        resolverFiles: [],
+        warning: null,
+      };
+      dnsApplies.push(o || {});
+      return ledger;
+    },
+    restoreDns: async (owned) => { dnsRestores.push(owned); },
+    inspectDns: async () => (opts.inspectDns || { ok: true, mode: 'split' }),
+    dnsStatus: async () => (opts.dnsStatus || { mode: 'vpn', ok: true, lanServers: ['192.168.1.1'], vpnServers: ['10.243.1.1'], suffixes: ['corp.example'] }),
     adds,
     dels,
+    dnsApplies,
+    dnsRestores,
   };
 }
 
@@ -66,6 +101,13 @@ function recordingExec(handler) {
 function mutationCalls(calls) {
   return calls.filter((c) => {
     const j = c.joined.toLowerCase();
+    const file = String(c.file || '').toLowerCase();
+    if (file.includes('networksetup') && (j.includes('setdnsservers') || j.includes('setsearchdomains'))) {
+      return true;
+    }
+    if (file.includes('resolvectl') && /(dns|domain|default-route|revert)/.test(j)) {
+      return true;
+    }
     return (
       /(^|\s)(add|delete|del|replace)(\s|$)/.test(j)
       && (j.includes('route') || c.file === 'route' || c.file === 'ip')

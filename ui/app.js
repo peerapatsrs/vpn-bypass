@@ -16,10 +16,10 @@
       persistTitle: "ปิดแท็บหรือปิดเทอร์มินัล ไม่ได้หยุดเส้นทาง",
       persistBody:
         "การปิดแท็บนี้ไม่ได้ปิดเส้นทางในเครื่อง การปิดหน้าต่างเทอร์มินัลก็เช่นกัน ต้องกด «หยุดใช้» เท่านั้นจึงจะคืนเส้นทางที่เครื่องมือนี้ใส่ไว้",
-      privTitle: "ยังไม่มีสิทธิ์แก้เส้นทาง",
+      privTitle: "จะถามรหัสผู้ดูแลเมื่อเปลี่ยนเส้นทาง",
       privBody:
-        "ดูสถานะและดูตัวอย่างได้ แต่การเริ่มใช้ หยุดใช้ ลองเว็บ เฝ้าทับ และแก้รายชื่อเว็บ ต้องรันด้วยสิทธิ์ผู้ดูแลระบบ (เช่น sudo)",
-      privLocked: "ปุ่มที่เปลี่ยนเส้นทางถูกล็อกไว้",
+        "ดูสถานะและดูตัวอย่างได้เลย จะถามรหัสผู้ดูแลเมื่อกดเริ่มใช้/หยุดใช้ รวมถึงอนุญาต ปฏิเสธ เฝ้าทับ หรือการแก้เส้นทาง/DNS ของระบบ",
+      privLocked: "ระบบนี้ยังยกสิทธิ์อัตโนมัติไม่ได้ — ปุ่มที่เปลี่ยนเส้นทางถูกล็อกไว้",
       statusTitle: "สถานะ",
       os: "ระบบ",
       lanIface: "เน็ตบ้าน (อินเทอร์เฟซ)",
@@ -35,11 +35,14 @@
       ipFail: "ตรวจไม่สำเร็จ",
       unknown: "ไม่ทราบ",
       na: "—",
-      warningsTitle: "ข้อจำกัด",
-      warnDns: "DNS ยังอาจผ่าน VPN",
-      warnIpv6: "IPv6 ยังไม่แยกเส้น",
-      warnGp: "ไคลเอนต์ VPN อาจเขียนเส้นทางทับ",
-      warnPolicy: "การแยกเส้นทางอาจขัดนโยบายบริษัท",
+      dnsLabel: "DNS",
+      dnsSplit: "แยก (เว็บบ้าน / องค์กร VPN)",
+      dnsLan: "เน็ตบ้าน",
+      dnsVpn: "VPN",
+      dnsNone: "ยังไม่แยก",
+      dnsUnsupported: "ไม่รองรับบนระบบนี้",
+      dnsSkipped: "ข้าม (ไม่เปลี่ยน)",
+      dnsUnknown: "ไม่ทราบ",
       osMac: "macOS",
       osWin: "Windows",
       osLinux: "Linux",
@@ -97,11 +100,17 @@
       modalBusy: "กำลังใส่เส้นทาง…",
       watchTitle: "เฝ้าทับเส้นทาง",
       watchBody:
-        "ปิดเป็นค่าเริ่ม กดเริ่มใช้แล้วปิดหน้านี้ได้ หากเปิดเฝ้าทับ ต้องเปิดเทอร์มินัลและหน้านี้ทิ้งไว้ เพื่อซ่อมเส้นทางเมื่อ VPN ทับ",
+        "คำสั่ง watch ใน CLI ปิดเป็นค่าเริ่ม เพื่อกดเริ่มใช้แล้วปิดเทอร์มินัลได้ ขณะเปิดหน้านี้ หลังยืนยันรหัสผู้ดูแลครั้งแรก ระบบซ่อมเส้นที่ VPN ทับให้อัตโนมัติ โดยไม่บันทึกเป็นเฝ้าทับถาวร",
       watchCost:
-        "ค่าใช้จ่ายของการเฝ้าทับ: ต้องเปิดเทอร์มินัลและหน้า UI ทิ้งไว้ ปิดแท็บไม่ได้เท่ากับหยุดเส้นทาง ปิดเทอร์มินัลก็ไม่ได้คืนเส้นทาง ต้องกดหยุดใช้เอง",
-      watchOn: "กำลังเฝ้าทับ",
-      watchOff: "เฝ้าทับปิดอยู่",
+        "ปิดแท็บไม่ได้เท่ากับหยุดเส้นทาง ปิดเทอร์มินัลก็ไม่ได้คืนเส้นทาง ต้องกดหยุดใช้เอง ปิดหน้านี้แล้วจะไม่ซ่อม reconnect จนกว่าจะเปิด UI อีกหรือรัน watch ใน CLI",
+      watchOn: "เฝ้าทับ CLI เปิดอยู่",
+      watchOff: "เฝ้าทับ CLI ปิดอยู่",
+      repairActive: "กำลังซ่อมเส้นทางอัตโนมัติขณะเปิดหน้านี้",
+      repairIdle: "หลังกดเริ่มใช้และยืนยันรหัสผู้ดูแลแล้ว ระบบจะซ่อมเส้นที่ VPN ทับให้อัตโนมัติขณะเปิดหน้านี้",
+      hijackTitle: "VPN ทับเส้นทางแล้ว",
+      hijackBody:
+        "ไคลเอนต์ VPN เขียนเส้นทางทับ กด «เริ่มใช้» อีกครั้ง (จะถามรหัสถ้ายังไม่เคยใส่ในเซสชันนี้) หรือรอซ่อมอัตโนมัติหลังเคยยืนยันรหัสแล้ว",
+      hijackRepairing: "พบว่าเส้นถูกทับ — กำลังซ่อม",
       logTitle: "บันทึกกิจกรรม",
       logEmpty: "ยังไม่มีรายการ",
       routesTitle: "เส้นทางที่วิ่งอยู่",
@@ -142,7 +151,7 @@
         "ติดต่อเซิร์ฟเวอร์ไม่ได้ ตรวจว่าเปิด vpn-bypass ui อยู่",
       errorHost: "ใส่ได้แค่ชื่อโฮสต์หรือไอพี ไม่ใช่ URL",
       errorEmptyDomains: "โหมดระบุเว็บใช้ไม่ได้เมื่อรายการว่าง",
-      errorPriv: "ไม่มีสิทธิ์เปลี่ยนเส้นทาง",
+      errorPriv: "ยกเลิกหน้าต่างรหัสผ่าน หรือไม่มีสิทธิ์ผู้ดูแล — กดอีกครั้งเพื่อลองใหม่",
       noticeOn:
         "ใส่เส้นทางแล้ว เทียบ IP สาธารณะเน็ตบ้านกับ VPN ได้ด้านบน",
       noticeOff: "คืนเส้นทางที่เครื่องมือนี้ใส่แล้ว",
@@ -162,10 +171,10 @@
       persistTitle: "Closing the tab or terminal does not stop routes",
       persistBody:
         "Closing this tab does not remove routes. Closing the terminal does not either. Only Stop using restores the routes this tool added.",
-      privTitle: "No permission to change routes",
+      privTitle: "Admin password is asked when routes change",
       privBody:
-        "Status and dry-run still work. Start, stop, try a site, watch, and domain edits need administrator rights (for example sudo).",
-      privLocked: "Route-changing controls are locked",
+        "Status and preview work without admin. Start, Stop, allow, deny, watch, and anything that changes routes or system DNS will ask for an administrator password.",
+      privLocked: "This OS cannot prompt for admin from the UI — route-changing controls are locked",
       statusTitle: "Status",
       os: "System",
       lanIface: "Home network (interface)",
@@ -181,11 +190,14 @@
       ipFail: "Lookup failed",
       unknown: "Unknown",
       na: "—",
-      warningsTitle: "Limits",
-      warnDns: "DNS may still go through the VPN",
-      warnIpv6: "IPv6 is not split",
-      warnGp: "The VPN client may overwrite routes",
-      warnPolicy: "Split routing may violate company policy",
+      dnsLabel: "DNS",
+      dnsSplit: "split (home web / corp VPN)",
+      dnsLan: "home LAN",
+      dnsVpn: "VPN",
+      dnsNone: "not split",
+      dnsUnsupported: "unsupported on this OS",
+      dnsSkipped: "skipped (unchanged)",
+      dnsUnknown: "unknown",
       osMac: "macOS",
       osWin: "Windows",
       osLinux: "Linux",
@@ -243,11 +255,17 @@
       modalBusy: "Adding route…",
       watchTitle: "Watch routes",
       watchBody:
-        "Off by default. After Start using you can close this page. If watch is on, keep the terminal and this UI running so routes can be repaired when the VPN overwrites them.",
+        "CLI watch stays off by default so Start using can be save-and-close. While this page is open, after the first administrator password in the session, overwritten routes are repaired automatically without saving a persistent watch flag.",
       watchCost:
-        "Watch cost: keep the terminal and UI running. Closing the tab does not turn routes off. Closing the terminal does not restore routes either. You must press Stop using.",
-      watchOn: "Watch is on",
-      watchOff: "Watch is off",
+        "Closing the tab does not turn routes off. Closing the terminal does not restore routes either. You must press Stop using. After you close this UI, reconnects are not repaired until you open the UI again or run CLI watch.",
+      watchOn: "CLI watch is on",
+      watchOff: "CLI watch is off",
+      repairActive: "Repairing overwritten routes while this page is open",
+      repairIdle: "After Start using and the admin password, overwritten routes are repaired automatically while this page stays open",
+      hijackTitle: "VPN overwrote the routes",
+      hijackBody:
+        "The VPN client overwrote owned routes. Click Start using again (it will ask for a password if this session has not elevated yet), or wait for automatic repair after you have already authenticated.",
+      hijackRepairing: "Owned routes were overwritten — repairing",
       logTitle: "Activity log",
       logEmpty: "No entries yet",
       routesTitle: "Where traffic goes",
@@ -288,7 +306,7 @@
         "Could not reach the server. Check that vpn-bypass ui is running.",
       errorHost: "Enter a hostname or IPv4 address, not a URL",
       errorEmptyDomains: "Listed-sites mode cannot start with an empty list",
-      errorPriv: "No permission to change routes",
+      errorPriv: "Administrator password was cancelled or denied — try again",
       noticeOn:
         "Routes applied. Compare the home and VPN public IPs above.",
       noticeOff: "Routes added by this tool were removed.",
@@ -297,15 +315,6 @@
       loading: "Loading…",
       offline: "No server data yet",
     },
-  };
-
-  const WARN_CODE = {
-    DNS_VPN: "warnDns",
-    DNS: "warnDns",
-    IPV6: "warnIpv6",
-    GP_OVERWRITE: "warnGp",
-    GP: "warnGp",
-    POLICY: "warnPolicy",
   };
 
   const state = {
@@ -437,19 +446,6 @@
     return payload;
   }
 
-  function isPrivError(res, json) {
-    if (res && res.status === 403) return true;
-    const code = pick(json, ["error.code", "code"], "");
-    return code === "EPRIV" || code === "EPERM";
-  }
-
-  function isMutatePath(method, path) {
-    const p = String(path || "").split("?")[0];
-    if (method === "POST" && /^\/api\/(on|off|try|allow|deny|watch|domains)$/.test(p)) return true;
-    if (method === "DELETE" && p === "/api/domains") return true;
-    return false;
-  }
-
   function errorMessage(json, fallbackKey) {
     const code = pick(json, ["error.code", "code"], "");
     if (code === "EPRIV" || code === "EPERM") return t("errorPriv");
@@ -483,9 +479,6 @@
     } catch (_err) {
       json = null;
     }
-    if (isPrivError(res, json) && isMutatePath(method, path)) {
-      state.ui.noAdmin = true;
-    }
     if (json && json.ok === false) {
       return {
         ok: false,
@@ -509,6 +502,8 @@
   }
 
   function locked() {
+    if (state.status && state.status.hasAdmin) return false;
+    if (state.status && state.status.canElevate) return false;
     if (state.ui.noAdmin) return true;
     if (state.status && state.status.hasAdmin === false) return true;
     return false;
@@ -535,17 +530,53 @@
     ).toLowerCase();
     return {
       hasAdmin: data.hasAdmin !== false,
+      canElevate: data.canElevate === true,
       os: pick(data, ["os", "platform", "ifaces.os"], ""),
       mode: mode === "domains" ? "domains" : "inverse",
       applied: !!applied,
-      warnings: asList(data.warnings),
       lanIface: pick(data, ["ifaces.lan.name", "ifaces.lan.iface", "lan.iface", "lanIface", "lan.ifname"], ""),
       lanGw: pick(data, ["ifaces.lan.gateway", "ifaces.lan.gw", "lan.gateway", "lanGw", "lan.gw"], ""),
       vpnIface: pick(data, ["ifaces.vpn.name", "ifaces.vpn.iface", "vpn.iface", "vpnIface", "vpn.ifname"], ""),
-      watchActive: !!(data.watchActive || data.watching || data.watch || pick(data, ["watch.enabled"], false)),
+      watchActive: !!(data.watch),
+      repairActive: !!(data.repairActive),
+      hijacked: !!(data.hijacked),
+      dns: normalizeDns(data.dns),
       allowed: asList(data.allowVpnHosts || data.allowedHosts || data.allowed),
       ownedRoutes: asList(data.ownedRoutes),
     };
+  }
+
+  function normalizeDns(raw) {
+    if (!raw || typeof raw !== "object") return { mode: "none", suffixes: [], warning: null, hijacked: false };
+    const mode = String(raw.mode || "none").toLowerCase();
+    const allowed = ["split", "lan", "vpn", "none", "unsupported", "skipped", "unknown"];
+    return {
+      mode: allowed.indexOf(mode) >= 0 ? mode : "unknown",
+      listen: raw.listen || "",
+      lanServers: asList(raw.lanServers),
+      vpnServers: asList(raw.vpnServers),
+      suffixes: asList(raw.suffixes),
+      warning: raw.warning || null,
+      hijacked: !!raw.hijacked,
+    };
+  }
+
+  function dnsLabel(dns) {
+    const mode = dns && dns.mode ? dns.mode : "none";
+    if (mode === "split") return t("dnsSplit");
+    if (mode === "lan") return t("dnsLan");
+    if (mode === "vpn") return t("dnsVpn");
+    if (mode === "unsupported") return t("dnsUnsupported");
+    if (mode === "skipped") return t("dnsSkipped");
+    if (mode === "unknown") return t("dnsUnknown");
+    return t("dnsNone");
+  }
+
+  function dnsPillClass(dns) {
+    const mode = dns && dns.mode ? dns.mode : "none";
+    if (mode === "split" || mode === "lan") return "pill pill-on";
+    if (mode === "vpn") return "pill pill-vpn";
+    return "pill pill-off";
   }
 
   function normalizeIps(data) {
@@ -723,17 +754,6 @@
     return os || t("unknown");
   }
 
-  function warningText(item) {
-    if (!item) return "";
-    if (typeof item === "string") {
-      const mapped = WARN_CODE[item] || WARN_CODE[item.toUpperCase()];
-      return mapped ? t(mapped) : item;
-    }
-    const code = String(pick(item, ["code", "id"], "")).toUpperCase();
-    if (WARN_CODE[code]) return t(WARN_CODE[code]);
-    return pick(item, ["message", "text"], String(item));
-  }
-
   function isValidHost(raw) {
     const h = String(raw || "").trim().toLowerCase();
     if (!h) return false;
@@ -809,22 +829,12 @@
 
     const st = state.status;
     const ips = state.ips;
-    const isLocked = locked();
     const mutOff = mutateDisabled();
     const mode = state.selectedMode === "domains" ? "domains" : "inverse";
     const domainsEmpty = state.domains.length === 0;
     const canStart = !(mutOff || (mode === "domains" && domainsEmpty));
     const dryDisabled = busy();
     const appliedMode = st ? st.mode : null;
-
-    const warnings = [];
-    ["warnDns", "warnIpv6", "warnGp", "warnPolicy"].forEach((key) => warnings.push(t(key)));
-    if (st && st.warnings) {
-      st.warnings.forEach((w) => {
-        const text = warningText(w);
-        if (text && warnings.indexOf(text) === -1) warnings.push(text);
-      });
-    }
 
     const dryRows = state.ui.dryRun || [];
     const modal = state.ui.modal;
@@ -866,11 +876,17 @@
           <p>${th("persistBody")}</p>
         </div>
 
-        ${isLocked ? `
-          <div class="banner banner-priv" role="alert">
+        ${st && st.hijacked ? `
+          <div class="banner banner-hijack" role="alert">
+            <h2>${th("hijackTitle")}</h2>
+            <p>${esc(st.repairActive ? t("hijackRepairing") : t("hijackBody"))}</p>
+          </div>` : ""}
+
+        ${st && st.hasAdmin === false ? `
+          <div class="banner ${st.canElevate ? "banner-priv-info" : "banner-priv"}" role="${st.canElevate ? "status" : "alert"}">
             <h2>${th("privTitle")}</h2>
             <p>${th("privBody")}</p>
-            <p class="hint">${th("privLocked")}</p>
+            ${st.canElevate ? "" : `<p class="hint">${th("privLocked")}</p>`}
           </div>` : ""}
 
         <main id="main">
@@ -884,6 +900,7 @@
               <div class="stat"><dt>${th("vpnIface")}</dt><dd>${esc(st && st.vpnIface ? st.vpnIface : t("na"))}</dd></div>
               <div class="stat"><dt>${th("currentMode")}</dt><dd>${esc(st && st.applied ? humanMode(appliedMode) : t("routesOff"))}</dd></div>
               <div class="stat"><dt>${th("routesState")}</dt><dd><span class="pill ${st && st.applied ? "pill-on" : "pill-off"}">${esc(st && st.applied ? t("routesOn") : t("routesOff"))}</span></dd></div>
+              <div class="stat"><dt>${th("dnsLabel")}</dt><dd><span class="${dnsPillClass(st && st.dns)}">${esc(dnsLabel(st && st.dns))}</span></dd></div>
             </dl>
             <div class="ip-pair">
               <div class="ip-box lan">
@@ -895,10 +912,6 @@
                 <span class="v">${esc(ipVpnText)}</span>
               </div>
             </div>
-            <h3 class="sr-only">${th("warningsTitle")}</h3>
-            <ul class="warnings">
-              ${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}
-            </ul>
           </section>
 
           <section class="card traffic-card" aria-labelledby="traffic-title">
@@ -990,8 +1003,8 @@
             ${st && !st.applied ? `<p class="hint">${th("tryNeedOn")}</p>` : ""}
             <form class="row" data-action="try-form">
               <label class="field sr-only" for="try-host">${th("tryTitle")}</label>
-              <input id="try-host" type="text" autocomplete="off" spellcheck="false" placeholder="${th("tryPlaceholder")}" value="${esc(state.ui.tryHost)}" ${mutOff ? "disabled" : ""}>
-              <button type="submit" class="btn btn-primary" ${mutOff ? "disabled" : ""}>${state.ui.busy === "try" ? th("trying") : th("tryAction")}</button>
+              <input id="try-host" type="text" autocomplete="off" spellcheck="false" placeholder="${th("tryPlaceholder")}" value="${esc(state.ui.tryHost)}" ${busy() ? "disabled" : ""}>
+              <button type="submit" class="btn btn-primary" ${busy() ? "disabled" : ""}>${state.ui.busy === "try" ? th("trying") : th("tryAction")}</button>
             </form>
             ${tryResult && tryResult.ok ? `<div class="notice ok" role="status">${th("tryOk")}</div>` : ""}
             ${tryResult && tryResult.ok === false && !modal ? `<div class="notice err">${esc(t("tryFail", { host: tryResult.host }))}</div>` : ""}
@@ -1070,6 +1083,7 @@
             <div class="banner banner-watch" style="margin-top:12px">
               <p>${th("watchCost")}</p>
             </div>
+            <p class="hint" style="margin-top:12px">${esc(st && st.repairActive ? t("repairActive") : t("repairIdle"))}</p>
             <div class="switch-row">
               <span>${esc(state.watchEnabled ? t("watchOn") : t("watchOff"))}</span>
               <button type="button" class="switch" role="switch" data-action="watch" aria-checked="${state.watchEnabled ? "true" : "false"}" ${mutOff ? "disabled" : ""} aria-label="${th("watchTitle")}"></button>
@@ -1135,7 +1149,11 @@
       return;
     }
     state.status = normalizeStatus(res.data);
-    if (state.status && state.status.hasAdmin === false) state.ui.noAdmin = true;
+    if (state.status && state.status.hasAdmin === false && !state.status.canElevate) {
+      state.ui.noAdmin = true;
+    } else if (state.status && (state.status.hasAdmin || state.status.canElevate)) {
+      state.ui.noAdmin = false;
+    }
     if (!state.modeTouched && state.status) {
       state.selectedMode = state.status.mode;
     }
@@ -1336,7 +1354,6 @@
       render();
       return;
     }
-    if (locked()) return;
     state.ui.busy = "try";
     state.ui.tryResult = null;
     setError(null);

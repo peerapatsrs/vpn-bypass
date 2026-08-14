@@ -1,6 +1,6 @@
 'use strict';
 
-const { isIpv4, maskToPrefix } = require('../core/net');
+const { isIpv4, isIpv6, maskToPrefix, withZone } = require('../core/net');
 
 function isVpnIface(name) {
   const n = String(name || '').toLowerCase();
@@ -72,6 +72,7 @@ function parseDarwinNetstat(text) {
       iface,
       inactive: flags.includes('I'),
       host: destInfo.prefix === 32 || flags.includes('H'),
+      family: 'inet',
     });
   }
   return routes;
@@ -91,7 +92,11 @@ function parseIfconfig(text) {
     const inet = /^\s+inet\s+(\d+\.\d+\.\d+\.\d+)(?:\s+-->\s+\S+)?\s+netmask\s+(\S+)/i.exec(line);
     if (inet) {
       const prefix = maskToPrefix(inet[2]);
-      current.addrs.push({ addr: inet[1], prefix: prefix == null ? 24 : prefix });
+      current.addrs.push({ addr: inet[1], prefix: prefix == null ? 24 : prefix, family: 'inet' });
+    }
+    const inet6 = /^\s+inet6\s+(\S+)\s+prefixlen\s+(\d+)/i.exec(line);
+    if (inet6 && isIpv6(inet6[1])) {
+      current.addrs.push({ addr: inet6[1], prefix: Number(inet6[2]), family: 'inet6' });
     }
   }
   return ifaces;
@@ -128,7 +133,7 @@ function parseLinuxIpRoute(text) {
       if (parts[i] === 'src' && parts[i + 1]) src = parts[i + 1];
       if (parts[i] === 'metric' && parts[i + 1]) metric = Number(parts[i + 1]);
     }
-    routes.push({ dest, prefix, gw, iface, src, metric, flags: '', inactive: false, host: prefix === 32 });
+    routes.push({ dest, prefix, gw, iface, src, metric, flags: '', inactive: false, host: prefix === 32, family: 'inet' });
   }
   return routes;
 }
@@ -207,6 +212,7 @@ function parseWin32RoutePrint(text) {
         flags: '',
         inactive: false,
         host: prefix === 32,
+        family: 'inet',
       });
     }
   }
@@ -215,7 +221,9 @@ function parseWin32RoutePrint(text) {
 
 function firstAddr(ifaces, name) {
   const found = (ifaces || []).find((i) => i.name === name);
-  return found && found.addrs && found.addrs[0] ? found.addrs[0] : null;
+  if (!found || !found.addrs || !found.addrs.length) return null;
+  const v4 = found.addrs.find((a) => a.family !== 'inet6' && isIpv4(a.addr));
+  return v4 || found.addrs[0] || null;
 }
 
 function inferTopology(routes, ifaces, osName) {
@@ -323,13 +331,129 @@ function inferTopology(routes, ifaces, osName) {
   };
 }
 
+function parseDarwinInet6Dest(raw) {
+  if (raw === 'default') return { dest: '::', prefix: 0 };
+  if (raw.includes('/')) {
+    const [d, p] = raw.split('/');
+    const prefix = Number(p);
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 128) return null;
+    if (!isIpv6(d)) return null;
+    return { dest: d, prefix };
+  }
+  if (isIpv6(raw)) return { dest: raw, prefix: 128 };
+  return null;
+}
+
+function parseDarwinNetstat6(text) {
+  const routes = [];
+  for (const line of String(text).split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^(Routing tables|Internet:|Internet6:|Destination)/i.test(trimmed)) continue;
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 4) continue;
+    const destInfo = parseDarwinInet6Dest(parts[0]);
+    if (!destInfo) continue;
+    const gw = parts[1];
+    const flags = parts[2] || '';
+    let iface = null;
+    for (let i = parts.length - 1; i >= 3; i -= 1) {
+      if (/^\d+$/.test(parts[i]) || parts[i] === '!') continue;
+      if (looksLikeIface(parts[i])) {
+        iface = parts[i];
+        break;
+      }
+    }
+    routes.push({
+      dest: destInfo.dest,
+      prefix: destInfo.prefix,
+      gw: isIpv6(gw) ? gw : null,
+      gwRaw: gw,
+      flags,
+      iface,
+      inactive: flags.includes('I'),
+      host: destInfo.prefix === 128 || flags.includes('H'),
+      family: 'inet6',
+    });
+  }
+  return routes;
+}
+
+function parseLinuxIpRoute6(text) {
+  const routes = [];
+  for (const line of String(text).split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\s+/);
+    let dest = null;
+    let prefix = null;
+    if (parts[0] === 'default') {
+      dest = '::';
+      prefix = 0;
+    } else if (parts[0].includes('/')) {
+      const [d, p] = parts[0].split('/');
+      dest = d;
+      prefix = Number(p);
+      if (!isIpv6(dest) || !Number.isInteger(prefix)) continue;
+    } else if (isIpv6(parts[0])) {
+      dest = parts[0];
+      prefix = 128;
+    } else {
+      continue;
+    }
+    let gw = null;
+    let iface = null;
+    let metric = null;
+    for (let i = 0; i < parts.length; i += 1) {
+      if (parts[i] === 'via' && parts[i + 1]) gw = parts[i + 1];
+      if (parts[i] === 'dev' && parts[i + 1]) iface = parts[i + 1];
+      if (parts[i] === 'metric' && parts[i + 1]) metric = Number(parts[i + 1]);
+    }
+    routes.push({
+      dest,
+      prefix,
+      gw: gw && isIpv6(gw) ? gw : null,
+      iface,
+      metric,
+      flags: '',
+      inactive: false,
+      host: prefix === 128,
+      family: 'inet6',
+    });
+  }
+  return routes;
+}
+
+function inferIpv6(routes6, topo) {
+  const lanIface = topo && topo.lan && topo.lan.iface;
+  const vpnIface = topo && topo.vpn && topo.vpn.iface;
+  const defaults = (routes6 || []).filter((r) => r.prefix === 0 && (r.dest === '::' || r.dest === '0:0:0:0:0:0:0:0'));
+  let lanDef = defaults.find((r) => lanIface && r.iface === lanIface && r.gw && isIpv6(r.gw) && !r.inactive);
+  if (!lanDef) {
+    lanDef = defaults.find((r) => lanIface && r.iface === lanIface && r.gw && isIpv6(r.gw));
+  }
+  const vpnDef = defaults.find((r) => vpnIface && r.iface === vpnIface);
+  const rawGw6 = lanDef && lanDef.gw ? lanDef.gw : null;
+  const gw6 = rawGw6 && topo && topo.os === 'darwin' ? withZone(rawGw6, lanIface) : rawGw6;
+  return {
+    ...topo,
+    routes6: routes6 || [],
+    lan: { ...(topo.lan || {}), gw6: gw6 || null },
+    vpn: { ...(topo.vpn || {}), gw6: vpnDef && vpnDef.gw ? vpnDef.gw : null },
+  };
+}
+
 module.exports = {
   isVpnIface,
   parseDarwinDest,
+  parseDarwinInet6Dest,
   parseDarwinNetstat,
+  parseDarwinNetstat6,
   parseIfconfig,
   parseLinuxIpRoute,
+  parseLinuxIpRoute6,
   parseLinuxIpAddr,
   parseWin32RoutePrint,
   inferTopology,
+  inferIpv6,
 };

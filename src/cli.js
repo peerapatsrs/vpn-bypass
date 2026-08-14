@@ -4,6 +4,7 @@ const { fail } = require('./core/errors');
 
 const COMMANDS = new Set([
   'status', 'on', 'off', 'domain', 'try', 'allow', 'deny', 'watch', 'ui', 'lang', 'lookup', 'help',
+  'elevate-helper',
 ]);
 
 function parseArgv(argv) {

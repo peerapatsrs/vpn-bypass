@@ -140,13 +140,85 @@ function validateTarget(raw, { allowIp = true } = {}) {
   return { type: 'hostname', value };
 }
 
+function splitZone(ip) {
+  const s = String(ip || '');
+  const idx = s.lastIndexOf('%');
+  if (idx <= 0) return { addr: s, zone: null };
+  return { addr: s.slice(0, idx), zone: s.slice(idx + 1) };
+}
+
+function stripZone(ip) {
+  return splitZone(ip).addr;
+}
+
+function isIpv6(ip) {
+  if (typeof ip !== 'string' || !ip) return false;
+  if (UNSAFE_CHARS.test(ip)) return false;
+  const { addr, zone } = splitZone(ip);
+  if (zone != null && !/^[A-Za-z0-9._-]+$/.test(zone)) return false;
+  if (addr.includes('.')) return false;
+  if (!/^[0-9a-fA-F:]+$/.test(addr)) return false;
+  if (addr.includes(':::')) return false;
+  const sides = addr.split('::');
+  if (sides.length > 2) return false;
+  const checkGroups = (part) => {
+    if (part === '') return true;
+    return part.split(':').every((g) => g.length > 0 && g.length <= 4);
+  };
+  if (sides.length === 2) {
+    const left = sides[0] === '' ? [] : sides[0].split(':');
+    const right = sides[1] === '' ? [] : sides[1].split(':');
+    if (left.some((g) => !g || g.length > 4) || right.some((g) => !g || g.length > 4)) return false;
+    if (left.length + right.length > 7) return false;
+    return true;
+  }
+  const groups = addr.split(':');
+  if (groups.length !== 8) return false;
+  return groups.every((g) => g.length > 0 && g.length <= 4 && checkGroups(g));
+}
+
+function isLinkLocal6(ip) {
+  if (!isIpv6(ip)) return false;
+  const addr = stripZone(ip).toLowerCase();
+  return addr === 'fe80::' || addr.startsWith('fe80:');
+}
+
+function withZone(ip, iface) {
+  if (!ip) return ip;
+  if (String(ip).includes('%')) return ip;
+  if (iface && isLinkLocal6(ip)) return `${stripZone(ip)}%${iface}`;
+  return ip;
+}
+
+function familyOf(route) {
+  if (route && route.family === 'inet6') return 'inet6';
+  if (route && route.dest && isIpv6(route.dest)) return 'inet6';
+  return 'inet';
+}
+
+function gwEqual(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return stripZone(a) === stripZone(b);
+}
+
 function assertSafeIpv4(ip) {
   if (!isIpv4(ip)) throw fail('EINVAL', `invalid IPv4: ${ip}`);
+}
+
+function assertSafeIpv6(ip) {
+  if (!isIpv6(ip)) throw fail('EINVAL', `invalid IPv6: ${ip}`);
 }
 
 function assertSafePrefix(prefix) {
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
     throw fail('EINVAL', `invalid prefix: ${prefix}`);
+  }
+}
+
+function assertSafePrefix6(prefix) {
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 128) {
+    throw fail('EINVAL', `invalid IPv6 prefix: ${prefix}`);
   }
 }
 
@@ -158,13 +230,21 @@ function assertSafeIface(name) {
 }
 
 function routeKey(route) {
-  return `${route.dest}/${route.prefix}|${route.gw || ''}|${route.iface || ''}|${route.kind || ''}`;
+  const fam = familyOf(route);
+  return `${fam}|${route.dest}/${route.prefix}|${route.gw || ''}|${route.iface || ''}|${route.kind || ''}`;
 }
 
 module.exports = {
   ipv4ToInt,
   intToIpv4,
   isIpv4,
+  isIpv6,
+  isLinkLocal6,
+  splitZone,
+  stripZone,
+  withZone,
+  familyOf,
+  gwEqual,
   inCidr,
   networkAddr,
   prefixToMask,
@@ -178,7 +258,9 @@ module.exports = {
   uniqueKeep,
   validateTarget,
   assertSafeIpv4,
+  assertSafeIpv6,
   assertSafePrefix,
+  assertSafePrefix6,
   assertSafeIface,
   routeKey,
   UNSAFE_CHARS,

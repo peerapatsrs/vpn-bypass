@@ -9,6 +9,24 @@ async function defaultResolve4(host) {
   return dns.resolve4(host);
 }
 
+function createLanResolve4(lanGw, fallback = defaultResolve4, factory) {
+  if (!lanGw || !isIpv4(lanGw) || isBlockedIPv4(lanGw)) return fallback;
+  const make = typeof factory === 'function' ? factory : () => new dns.Resolver();
+  return async function lanResolve4(host) {
+    try {
+      const resolver = make();
+      if (resolver && typeof resolver.setServers === 'function') {
+        resolver.setServers([lanGw]);
+      }
+      const ips = await resolver.resolve4(host);
+      if (ips && ips.length) return ips;
+    } catch {
+      // fall through to system DNS
+    }
+    return fallback(host);
+  };
+}
+
 function defaultProbeTls(host, opts = {}) {
   const timeout = opts.timeout ?? 3000;
   return new Promise((resolve) => {
@@ -81,6 +99,7 @@ async function probeHost(host, opts = {}) {
 module.exports = {
   defaultResolve4,
   defaultProbeTls,
+  createLanResolve4,
   resolveHostIps,
   probeHost,
   validateTarget,
