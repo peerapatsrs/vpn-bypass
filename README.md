@@ -2,8 +2,8 @@
 
 CLI and localhost UI that split-route **IPv4** around a full-tunnel corporate VPN: general web via your home LAN, intranet via the VPN.
 
-[![npm version](https://img.shields.io/npm/v/vpn-bypass.svg)](https://www.npmjs.com/package/vpn-bypass)
-[![node](https://img.shields.io/node/v/vpn-bypass.svg)](https://nodejs.org)
+[![npm version](https://img.shields.io/npm/v/@peerapat.srs/vpn-bypass.svg)](https://www.npmjs.com/package/@peerapat.srs/vpn-bypass)
+[![node](https://img.shields.io/node/v/@peerapat.srs/vpn-bypass.svg)](https://nodejs.org)
 
 This is **not** official corporate split-tunnel. The well-tested case is **macOS + Palo Alto GlobalProtect** (`utun`). Linux and Windows adapters exist and are less tested.
 
@@ -36,14 +36,16 @@ No runtime npm dependencies.
 Once published:
 
 ```bash
-npm i -g vpn-bypass
+npm i -g @peerapat.srs/vpn-bypass
 vpn-bypass status
 ```
+
+The CLI command stays `vpn-bypass` after install.
 
 Or without a global install:
 
 ```bash
-npx vpn-bypass status
+npx @peerapat.srs/vpn-bypass status
 ```
 
 Applying routes still needs admin rights, for example:
