@@ -1,0 +1,31 @@
+{
+  "name": "vpn-bypass",
+  "version": "0.1.0",
+  "description": "CLI and localhost UI that split-route IPv4 around a full-tunnel corporate VPN (home LAN for the web, intranet via VPN).",
+  "bin": {
+    "vpn-bypass": "bin/vpn-bypass.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "ui/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/vpn-bypass.js ui",
+    "test": "node --test"
+  },
+  "keywords": [
+    "vpn",
+    "split-tunnel",
+    "routing",
+    "globalprotect",
+    "macos",
+    "cli",
+    "ipv4",
+    "lan"
+  ],
+  "license": "MIT"
+}
