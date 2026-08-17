@@ -47,7 +47,23 @@ function appleScriptQuote(value) {
   return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+function toPlatformSockPath(sockPath, dir, uid) {
+  if (process.platform === 'win32') {
+    if (sockPath && (sockPath.startsWith('\\\\.\\pipe\\') || sockPath.startsWith('\\\\?\\pipe\\'))) {
+      return sockPath;
+    }
+    const base = sockPath || (dir ? path.join(dir, 'elevate.sock') : `elevate-${uid ?? 'user'}`);
+    const name = String(base).replace(/[^a-zA-Z0-9._-]/g, '_');
+    return `\\\\.\\pipe\\vpn-bypass-${name}`;
+  }
+  if (sockPath) return sockPath;
+  return defaultSockPath(dir, uid);
+}
+
 function defaultSockPath(dir, uid) {
+  if (process.platform === 'win32') {
+    return toPlatformSockPath(null, dir, uid);
+  }
   const preferred = path.join(dir, 'elevate.sock');
   if (Buffer.byteLength(preferred) < 100) return preferred;
   const id = uid == null ? 'user' : String(uid);
@@ -277,7 +293,8 @@ function createElevate(opts = {}) {
   const spawnImpl = opts.spawnImpl || spawn;
   const node = opts.node || process.execPath;
   const script = opts.script || cliScriptPath();
-  const sockPath = opts.sockPath || defaultSockPath(paths.dir, typeof process.getuid === 'function' ? process.getuid() : 0);
+  const rawSockPath = opts.sockPath || defaultSockPath(paths.dir, typeof process.getuid === 'function' ? process.getuid() : 0);
+  const sockPath = toPlatformSockPath(rawSockPath, paths.dir, typeof process.getuid === 'function' ? process.getuid() : 0);
   const pidFile = opts.pidFile || pidFilePath(paths.dir);
 
   function supported() {
@@ -293,6 +310,9 @@ function createElevate(opts = {}) {
       const raw = fs.readFileSync(pidFile, 'utf8').trim();
       const pid = Number(raw);
       if (!pidAlive(pid)) return false;
+      if (platformName === 'win32' || process.platform === 'win32' || sockPath.startsWith('\\\\.\\pipe\\') || sockPath.startsWith('\\\\?\\pipe\\')) {
+        return true;
+      }
       return fs.existsSync(sockPath);
     } catch {
       return false;
@@ -468,6 +488,7 @@ module.exports = {
   cliScriptPath,
   refuseRealGuiElevate,
   createElevate,
+  toPlatformSockPath,
   canRunElevate,
   withElevate,
   resultFromDisk,

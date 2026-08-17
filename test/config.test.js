@@ -137,7 +137,13 @@ describe('config ownership + EACCES', () => {
     const home = tmpHome();
     const paths = getPaths(home);
     saveConfig(paths, { locale: 'en' });
-    fs.chmodSync(paths.config, 0o000);
+    const origRead = fs.readFileSync;
+    fs.readFileSync = (file, enc) => {
+      if (typeof file === 'string' && file.includes('config.json')) {
+        throw eacces(file);
+      }
+      return origRead(file, enc);
+    };
     const chunks = [];
     const origErr = process.stderr.write;
     process.stderr.write = (c) => {
@@ -153,8 +159,8 @@ describe('config ownership + EACCES', () => {
       assert.equal(out.includes('at Object.readFileSync'), false);
       assert.equal(t('th', 'error.EACCES').includes(CHOWN_HINT), true);
     } finally {
+      fs.readFileSync = origRead;
       process.stderr.write = origErr;
-      try { fs.chmodSync(paths.config, 0o600); } catch { /* ignore */ }
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

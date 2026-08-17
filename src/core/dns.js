@@ -99,7 +99,7 @@ function parseScutilDns(text) {
     current = null;
   }
 
-  for (const line of String(text || '').split(/\n/)) {
+  for (const line of String(text || '').split(/\r?\n/)) {
     if (/DNS configuration \(for scoped queries\)/i.test(line)) {
       flush();
       scopedSection = true;
@@ -160,7 +160,7 @@ function parseScutilDns(text) {
 
 function parseServiceOrder(text) {
   const services = [];
-  const lines = String(text || '').split(/\n/);
+  const lines = String(text || '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const m = /^\((\d+)\)\s+(\*\s+)?(.*)$/.exec(lines[i].trim());
     if (!m) continue;
@@ -186,7 +186,7 @@ function parseDnsServersOutput(stdout) {
     return { servers: [], empty: true };
   }
   const servers = [];
-  for (const line of text.split(/\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const t = line.trim();
     if (isIpv4(t)) servers.push(t);
   }
@@ -199,7 +199,7 @@ function parseSearchDomainsOutput(stdout) {
     return { search: [], empty: true };
   }
   const search = [];
-  for (const line of text.split(/\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const t = line.trim();
     if (t && !/search domain/i.test(t)) search.push(t);
   }

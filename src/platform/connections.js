@@ -29,7 +29,7 @@ function parseLsofFields(text) {
   const out = [];
   let pid = null;
   let process = null;
-  for (const raw of String(text || '').split('\n')) {
+  for (const raw of String(text || '').split(/\r?\n/)) {
     if (!raw) continue;
     const key = raw[0];
     const val = raw.slice(1);
@@ -60,7 +60,7 @@ function parseLsofFields(text) {
 
 function parseSs(text) {
   const out = [];
-  for (const line of String(text || '').split('\n')) {
+  for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
     const addrs = line.match(/(\d+\.\d+\.\d+\.\d+):(\d+)/g);
     if (!addrs || addrs.length < 2) continue;
@@ -83,7 +83,7 @@ function parseSs(text) {
 
 function parseNetstatTcp(text) {
   const out = [];
-  for (const line of String(text || '').split('\n')) {
+  for (const line of String(text || '').split(/\r?\n/)) {
     if (!/established/i.test(line)) continue;
     const addrs = line.match(/(\d+\.\d+\.\d+\.\d+):(\d+)/g);
     if (!addrs || addrs.length < 2) continue;

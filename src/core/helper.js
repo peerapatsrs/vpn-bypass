@@ -7,7 +7,8 @@ const { fail } = require('./errors');
 const { ownAsInvoker, ownConfigDir } = require('./config');
 const { repairOwned } = require('./apply');
 const { pidAlive } = require('./lock');
-const { assertJob, defaultSockPath, pidFilePath, ENV_KEYS } = require('./elevate');
+const { assertJob, defaultSockPath, toPlatformSockPath, pidFilePath, ENV_KEYS } = require('./elevate');
+const { execEnv } = require('../platform/exec');
 
 const MAX_JOB = 64 * 1024;
 
@@ -17,7 +18,7 @@ function helperChildEnv() {
     if (process.env[key]) env[key] = process.env[key];
   }
   env.VPN_BYPASS_HELPER_READY = '1';
-  env.PATH = process.env.PATH || '/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin';
+  env.PATH = execEnv().PATH;
   if (process.env.HOME) env.HOME = process.env.HOME;
   return env;
 }
@@ -114,11 +115,15 @@ function attachConn(conn, service, onQuit) {
 function listenHelper(service, opts = {}) {
   const paths = service.paths;
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
-  const sockPath = opts.sockPath || process.env.VPN_BYPASS_HELPER_SOCK || defaultSockPath(paths.dir, uid);
+  const rawSock = opts.sockPath || process.env.VPN_BYPASS_HELPER_SOCK || defaultSockPath(paths.dir, uid);
+  const sockPath = toPlatformSockPath(rawSock, paths.dir, uid);
   const pidFile = opts.pidFile || pidFilePath(paths.dir);
+  const isPipe = sockPath.startsWith('\\\\.\\pipe\\') || sockPath.startsWith('\\\\?\\pipe\\');
   fs.mkdirSync(paths.dir, { recursive: true });
   ownConfigDir(paths.dir);
-  try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+  if (!isPipe) {
+    try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+  }
 
   const server = net.createServer();
   let closing = false;
@@ -127,7 +132,9 @@ function listenHelper(service, opts = {}) {
     if (closing) return;
     closing = true;
     try { server.close(); } catch { /* ignore */ }
-    try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+    if (!isPipe) {
+      try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+    }
     try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
     if (typeof opts.onShutdown === 'function') opts.onShutdown();
   }
@@ -140,8 +147,10 @@ function listenHelper(service, opts = {}) {
     server.once('error', reject);
     server.listen(sockPath, () => {
       server.removeListener('error', reject);
-      try { fs.chmodSync(sockPath, 0o600); } catch { /* ignore */ }
-      ownAsInvoker(sockPath);
+      if (!isPipe) {
+        try { fs.chmodSync(sockPath, 0o600); } catch { /* ignore */ }
+        ownAsInvoker(sockPath);
+      }
       fs.writeFileSync(pidFile, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600 });
       ownAsInvoker(pidFile);
       ownConfigDir(paths.dir);

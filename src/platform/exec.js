@@ -1,15 +1,24 @@
 'use strict';
 
+const path = require('path');
 const { execFile } = require('child_process');
 
-const SAFE_PATH = '/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin';
+const SAFE_UNIX_PATH = '/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin';
+const SAFE_WIN32_PATH = [
+  process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32') : 'C:\\Windows\\System32',
+  process.env.SystemRoot ? process.env.SystemRoot : 'C:\\Windows',
+  process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'Wbem') : 'C:\\Windows\\System32\\Wbem',
+  process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0') : 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+].join(';');
 
 function execEnv(extra) {
   const env = { ...process.env, ...(extra || {}) };
-  const merged = `${SAFE_PATH}:${env.PATH || ''}`
-    .split(':')
+  const delimiter = path.delimiter;
+  const safe = process.platform === 'win32' ? SAFE_WIN32_PATH : SAFE_UNIX_PATH;
+  const merged = `${safe}${delimiter}${env.PATH || ''}`
+    .split(delimiter)
     .filter(Boolean);
-  env.PATH = [...new Set(merged)].join(':');
+  env.PATH = [...new Set(merged)].join(delimiter);
   return env;
 }
 

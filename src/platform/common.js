@@ -80,7 +80,7 @@ function looksLikeIface(token) {
 
 function parseDarwinNetstat(text) {
   const routes = [];
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (/^(Routing tables|Internet:|Destination|Internet6:)/i.test(trimmed)) continue;
@@ -116,7 +116,7 @@ function parseDarwinNetstat(text) {
 function parseIfconfig(text) {
   const ifaces = [];
   let current = null;
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const head = /^([A-Za-z0-9._-]+):\s/.exec(line);
     if (head) {
       current = { name: head[1], addrs: [] };
@@ -139,7 +139,7 @@ function parseIfconfig(text) {
 
 function parseLinuxIpRoute(text) {
   const routes = [];
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const parts = trimmed.split(/\s+/);
@@ -176,7 +176,7 @@ function parseLinuxIpRoute(text) {
 function parseLinuxIpAddr(text) {
   const ifaces = [];
   let current = null;
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const head = /^\d+:\s+([A-Za-z0-9._-]+):/.exec(line);
     if (head) {
       current = { name: head[1], addrs: [] };
@@ -458,7 +458,7 @@ function parseDarwinInet6Dest(raw) {
 
 function parseDarwinNetstat6(text) {
   const routes = [];
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (/^(Routing tables|Internet:|Internet6:|Destination)/i.test(trimmed)) continue;
@@ -493,7 +493,7 @@ function parseDarwinNetstat6(text) {
 
 function parseLinuxIpRoute6(text) {
   const routes = [];
-  for (const line of String(text).split(/\n/)) {
+  for (const line of String(text).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const parts = trimmed.split(/\s+/);
