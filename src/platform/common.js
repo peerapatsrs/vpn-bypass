@@ -2,17 +2,52 @@
 
 const { isIpv4, isIpv6, maskToPrefix, withZone } = require('../core/net');
 
+function normIfaceName(name) {
+  return String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 function isVpnIface(name) {
-  const n = String(name || '').toLowerCase();
+  const n = normIfaceName(name);
   if (!n) return false;
   if (n === 'lo' || n === 'lo0' || n.startsWith('loopback')) return false;
   if (/^(utun|tun|tap|ppp|ipsec|wg)\d*$/i.test(n)) return true;
   if (n.startsWith('utun') || n.startsWith('tun') || n.startsWith('tap')) return true;
   if (n.startsWith('ppp') || n.startsWith('ipsec') || n.startsWith('wg')) return true;
-  if (n.includes('gpd') || n.includes('pangp') || n.includes('globalprotect')) return true;
+  if (n.includes('gpd') || n.includes('pangp') || n.includes('globalprotect') || n.includes('global protect')) return true;
+  if (n.includes('palo alto') || n.includes('paloalto') || /\bpan\s*gp\b/.test(n)) return true;
   if (n.includes('wintun') || n.includes('wireguard')) return true;
-  if (n.includes('anyconnect') || n.includes('cscotun') || n.includes('fortissl')) return true;
+  if (n.includes('anyconnect') || n.includes('cscotun') || n.includes('fortissl') || n.includes('forticlient') || n.includes('fortinet')) return true;
+  if (n.includes('tap-windows') || n.includes('tap0901') || n.includes('wan miniport')) return true;
+  if (n.includes('zscaler') || n.includes('checkpoint') || n.includes('check point') || n.includes('sonicwall')) return true;
+  if (n.includes('openvpn') || n.includes('softether')) return true;
   if (n.includes('vpn')) return true;
+  return false;
+}
+
+function isIgnoredIface(name) {
+  const n = normIfaceName(name);
+  if (!n) return true;
+  if (n === 'lo' || n === 'lo0' || n.includes('loopback')) return true;
+  if (/\bbluetooth\b/.test(n)) return true;
+  if (/hyper-v|\bvethernet\b|vmware|virtualbox|\bdocker\b|\bwsl\b/.test(n)) return true;
+  if (/\bteredo\b|\bisatap\b|\b6to4\b/.test(n)) return true;
+  if (/wi-?fi direct|hosted network|microsoft hosted/.test(n)) return true;
+  return false;
+}
+
+function isWifiIface(name) {
+  const n = normIfaceName(name);
+  if (!n || isVpnIface(n) || isIgnoredIface(n)) return false;
+  return /\bwi-?fi\b|\bwifi\b|\bwlan\b|\bwireless\b|802\.11|ไร้สาย/.test(n);
+}
+
+function isLanIface(name) {
+  const n = normIfaceName(name);
+  if (!n || isVpnIface(n) || isIgnoredIface(n)) return false;
+  if (isWifiIface(n)) return true;
+  if (/\bethernet\b/.test(n)) return true;
+  if (/local area connection/.test(n)) return true;
+  if (/\bgigabit\b/.test(n)) return true;
   return false;
 }
 
@@ -162,61 +197,138 @@ function parseWinMask(mask) {
   return p == null ? 32 : p;
 }
 
+function parseWin32IfaceLine(line) {
+  const m = /^\s*(\d+)\.{2,}(.*)$/.exec(line);
+  if (!m) return null;
+  let rest = m[2].trim();
+  rest = rest.replace(/^(?:[0-9a-f]{2}[- ]){5}[0-9a-f]{2}\s*/i, '');
+  rest = rest.replace(/^\.{2,}\s*/, '').trim();
+  if (!rest) return null;
+  return { index: Number(m[1]), name: rest, addrs: [] };
+}
+
+function isOnLinkGw(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  if (/^on-?link$/i.test(s)) return true;
+  if (/^บนลิงก์$/i.test(s)) return true;
+  return false;
+}
+
+function parseWin32RouteLine(line) {
+  if (/Network Destination|Default Gateway|ปลายทาง|เกตเวย์|Netzwerkziel|Destination réseau/i.test(line)) return null;
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 5) return null;
+  if (!isIpv4(parts[0]) || !isIpv4(parts[1])) return null;
+  const dest = parts[0];
+  const prefix = parseWinMask(parts[1]);
+  const gwRaw = parts[2];
+  let gw = null;
+  let ifaceIp = null;
+  let metric = Number(parts[4]);
+  if (isOnLinkGw(gwRaw)) {
+    ifaceIp = isIpv4(parts[3]) ? parts[3] : null;
+  } else if (isIpv4(gwRaw) && isIpv4(parts[3])) {
+    gw = gwRaw;
+    ifaceIp = parts[3];
+  } else if (isIpv4(parts[3]) && /^\d+$/.test(parts[4])) {
+    ifaceIp = parts[3];
+    metric = Number(parts[4]);
+  } else {
+    return null;
+  }
+  return {
+    dest,
+    prefix,
+    gw: isIpv4(gw) ? gw : null,
+    iface: ifaceIp,
+    ifaceIp,
+    metric: Number.isFinite(metric) ? metric : null,
+    flags: '',
+    inactive: false,
+    host: prefix === 32,
+    family: 'inet',
+  };
+}
+
 function parseWin32RoutePrint(text) {
   const ifaces = [];
   const routes = [];
   const lines = String(text).replace(/\r\n/g, '\n').split('\n');
   let section = 'start';
   for (const line of lines) {
-    if (/Interface List/i.test(line)) {
+    if (/Interface List|รายการอินเทอร์เฟซ|Schnittstellenliste|Liste des interfaces|Elenco interfacce/i.test(line)) {
       section = 'ifaces';
       continue;
     }
-    if (/IPv4 Route Table/i.test(line) || /Active Routes:/i.test(line)) {
-      section = section === 'ifaces' && /IPv4 Route Table/i.test(line) ? 'table' : 'routes';
-      if (/Active Routes:/i.test(line)) section = 'routes';
+    if (/IPv4 Route Table|ตารางเส้นทาง IPv4|IPv4-Routentabelle|Table de routes IPv4|Tabella route IPv4/i.test(line)) {
+      section = 'table';
       continue;
     }
-    if (/Persistent Routes:/i.test(line)) {
+    if (/Active Routes:|เส้นทางที่ใช้งาน|Aktive Routen|Itinéraires actifs|Route attive/i.test(line)) {
+      section = 'routes';
+      continue;
+    }
+    if (/Persistent Routes:|เส้นทางถาวร|Persistente Routen|Itinéraires persistants|Route persistenti/i.test(line)) {
       section = 'persistent';
       continue;
     }
-    if (section === 'ifaces') {
-      const m = /^\s*(\d+)\.{2,}(.*)$/.exec(line);
-      if (m) {
-        let rest = m[2].trim();
-        rest = rest.replace(/^(?:[0-9a-f]{2}[- ]){5}[0-9a-f]{2}\s*/i, '');
-        rest = rest.replace(/^\.{2,}\s*/, '').trim();
-        if (rest) ifaces.push({ index: Number(m[1]), name: rest, addrs: [] });
-      }
+    const iface = parseWin32IfaceLine(line);
+    if (iface && (section === 'ifaces' || section === 'start')) {
+      if (!ifaces.some((i) => i.index === iface.index && i.name === iface.name)) ifaces.push(iface);
       continue;
     }
-    if (section === 'routes') {
-      if (/Network Destination/i.test(line) || /Default Gateway/i.test(line)) continue;
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 5) continue;
-      if (!isIpv4(parts[0]) || !isIpv4(parts[1])) continue;
-      const dest = parts[0];
-      const prefix = parseWinMask(parts[1]);
-      const gwRaw = parts[2];
-      const gw = gwRaw === 'On-link' || gwRaw === 'on-link' ? null : gwRaw;
-      const ifaceIp = isIpv4(parts[3]) ? parts[3] : null;
-      const metric = Number(parts[4]);
-      routes.push({
-        dest,
-        prefix,
-        gw: isIpv4(gw) ? gw : null,
-        iface: ifaceIp,
-        ifaceIp,
-        metric: Number.isFinite(metric) ? metric : null,
-        flags: '',
-        inactive: false,
-        host: prefix === 32,
-        family: 'inet',
-      });
+    if (section === 'persistent') continue;
+    const route = parseWin32RouteLine(line);
+    if (route && (section === 'routes' || section === 'table' || section === 'start')) {
+      routes.push(route);
     }
   }
   return { routes, ifaces };
+}
+
+function adapterNameFromHeader(header) {
+  const h = String(header || '').trim().replace(/:$/, '');
+  if (!h) return null;
+  if (/windows ip configuration|ip-konfiguration|configuration ip de windows/i.test(h)) return null;
+  const named = /(?:adapter|อะแดปเตอร์|アダプター|어댑터|carte réseau)\s+(.+)$/i.exec(h);
+  if (named) return named[1].trim();
+  return h;
+}
+
+function parseWin32Ipconfig(text) {
+  const names = Object.create(null);
+  const gateways = Object.create(null);
+  const adapters = [];
+  let current = null;
+  for (const line of String(text).replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (!/^\s/.test(line) && /:\s*$/.test(trimmed) && !trimmed.includes('. .')) {
+      const name = adapterNameFromHeader(trimmed);
+      if (name) {
+        current = { name, ips: [], gw: null };
+        adapters.push(current);
+      } else {
+        current = null;
+      }
+      continue;
+    }
+    if (!current) continue;
+    const ipv4 = /(?:IPv4(?: Address|-Adresse)?|Adresse IPv4|ที่อยู่ IPv4).*?:\s*(\d+\.\d+\.\d+\.\d+)/i.exec(trimmed);
+    if (ipv4 && isIpv4(ipv4[1])) {
+      names[ipv4[1]] = current.name;
+      current.ips.push(ipv4[1]);
+      if (current.gw) gateways[ipv4[1]] = current.gw;
+      continue;
+    }
+    const gw = /(?:Default Gateway|Standardgateway|เกตเวย์เริ่มต้น|Passerelle par défaut).*?:\s*(\S+)/i.exec(trimmed);
+    if (gw && isIpv4(gw[1])) {
+      current.gw = gw[1];
+      for (const ip of current.ips) gateways[ip] = gw[1];
+    }
+  }
+  return { names, gateways, adapters };
 }
 
 function firstAddr(ifaces, name) {
@@ -445,6 +557,9 @@ function inferIpv6(routes6, topo) {
 
 module.exports = {
   isVpnIface,
+  isWifiIface,
+  isLanIface,
+  parseWin32Ipconfig,
   parseDarwinDest,
   parseDarwinInet6Dest,
   parseDarwinNetstat,

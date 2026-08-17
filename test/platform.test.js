@@ -7,7 +7,19 @@ const path = require('path');
 const darwin = require('../src/platform/darwin');
 const linux = require('../src/platform/linux');
 const win32 = require('../src/platform/win32');
-const { parseDarwinNetstat, parseDarwinNetstat6, parseIfconfig, parseLinuxIpRoute, parseLinuxIpRoute6, parseLinuxIpAddr, inferTopology, inferIpv6 } = require('../src/platform/common');
+const {
+  parseDarwinNetstat,
+  parseDarwinNetstat6,
+  parseIfconfig,
+  parseLinuxIpRoute,
+  parseLinuxIpRoute6,
+  parseLinuxIpAddr,
+  inferTopology,
+  inferIpv6,
+  isVpnIface,
+  isWifiIface,
+  isLanIface,
+} = require('../src/platform/common');
 const { recordingExec, tmpHome, sampleDetect } = require('./helpers');
 const { getPaths } = require('../src/core/config');
 
@@ -85,6 +97,66 @@ describe('parse fixtures', () => {
     const detect = win32.detectFromPrint(text);
     assert.equal(detect.lan.gw, '192.168.1.1');
     assert.equal(detect.vpn.up, true);
+  });
+
+  it('treats Windows Wi-Fi as LAN when VPN is a generic Ethernet adapter', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-wifi.txt'), 'utf8');
+    const ipconfig = fs.readFileSync(path.join(FIX, 'win32/ipconfig-wifi.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text, ipconfig);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.gw, '192.168.1.1');
+    assert.equal(detect.lan.iface, 'Wi-Fi');
+    assert.equal(detect.lan.addr, '192.168.1.42');
+    assert.notEqual(detect.lan.iface, 'Ethernet 3');
+    assert.equal(isVpnIface('Wi-Fi'), false);
+    assert.equal(isWifiIface('Wi-Fi'), true);
+    assert.equal(isLanIface('Wi-Fi'), true);
+    assert.equal(isWifiIface('Microsoft Wi-Fi Direct Virtual Adapter'), false);
+  });
+
+  it('treats Windows WLAN as LAN without a named VPN adapter', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-wlan.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.iface, 'WLAN');
+    assert.equal(detect.lan.gw, '192.168.0.1');
+    assert.equal(isWifiIface('WLAN'), true);
+    assert.equal(isVpnIface('Ethernet 2'), false);
+  });
+
+  it('detects VPN on generic Local Area Connection names', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-generic.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.gw, '192.168.1.1');
+    assert.equal(detect.lan.addr, '192.168.1.42');
+  });
+
+  it('recovers LAN from on-link + ipconfig when VPN stole the only default', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-fulltunnel.txt'), 'utf8');
+    const ipconfig = fs.readFileSync(path.join(FIX, 'win32/ipconfig-fulltunnel.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text, ipconfig);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.gw, '192.168.1.1');
+    assert.equal(detect.lan.iface, 'Killer Wireless-n');
+    assert.equal(detect.lan.addr, '192.168.1.42');
+  });
+
+  it('splits 10.x home LAN /24 from 10.x VPN /32 without relying on names', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-10lan.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.gw, '10.0.0.1');
+    assert.equal(detect.lan.addr, '10.0.0.50');
+    assert.equal(detect.vpn.addr, '10.243.1.92');
+  });
+
+  it('parses Thai Windows route print headers', () => {
+    const text = fs.readFileSync(path.join(FIX, 'win32/route-print-thai.txt'), 'utf8');
+    const detect = win32.detectFromPrint(text);
+    assert.equal(detect.vpn.up, true);
+    assert.equal(detect.lan.gw, '192.168.1.1');
+    assert.equal(detect.lan.iface, 'Wi-Fi');
   });
 
   it('darwin applyDns points system DNS at 127.0.0.1 and restore never leaves it', async () => {

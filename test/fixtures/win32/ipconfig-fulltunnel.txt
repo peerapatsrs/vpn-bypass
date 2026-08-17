@@ -1,0 +1,13 @@
+Windows IP Configuration
+
+Unknown adapter Killer Wireless-n:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.1.42
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+
+Ethernet adapter Ethernet 4:
+
+   IPv4 Address. . . . . . . . . . . : 10.243.1.92
+   Subnet Mask . . . . . . . . . . . : 255.255.255.255
+   Default Gateway . . . . . . . . . : 10.243.1.1
