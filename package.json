@@ -1,6 +1,6 @@
 {
   "name": "@peerapat.srs/vpn-bypass",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "CLI and localhost UI that split-route IPv4/IPv6 and split-DNS around a full-tunnel corporate VPN (home LAN for the web, intranet via VPN).",
   "bin": {
     "vpn-bypass": "bin/vpn-bypass.js"
@@ -31,6 +31,8 @@
     "routing",
     "globalprotect",
     "macos",
+    "windows",
+    "linux",
     "cli",
     "ipv4",
     "dns",

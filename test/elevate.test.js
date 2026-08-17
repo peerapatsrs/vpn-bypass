@@ -9,6 +9,8 @@ const {
   appleScriptQuote,
   buildDarwinShellCommand,
   buildDarwinElevateScript,
+  buildWin32ElevateCommand,
+  encodeUtf16LeBase64,
   assertJob,
   jobToArgv,
   createElevate,
@@ -109,6 +111,56 @@ describe('elevate quoting + jobs', () => {
     });
     await assert.rejects(() => elevate.ensureHelper(), (err) => err.code === 'EPRIV');
     fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('win32 canElevate and oneShot uses RunAs PassThru with helper env', async () => {
+    const home = tmpHome();
+    const calls = [];
+    const elevate = createElevate({
+      paths: { dir: home, config: `${home}/c.json`, state: `${home}/s.json`, lock: `${home}/l` },
+      platform: 'win32',
+      node: 'C:\\Program Files\\nodejs\\node.exe',
+      script: 'C:\\vpn-bypass\\bin\\vpn-bypass.js',
+      spawnImpl: (file, args, opts) => {
+        calls.push({ file, args: args.slice(), env: opts && opts.env });
+        return fakeChild(0);
+      },
+    });
+    assert.equal(elevate.supported(), true);
+    await elevate.run({ cmd: 'on', mode: 'inverse' });
+    assert.equal(calls.length, 1);
+    assert.match(String(calls[0].file), /powershell\.exe$/i);
+    const cmd = calls[0].args.join(' ');
+    assert.match(cmd, /RunAs/);
+    assert.match(cmd, /PassThru/);
+    assert.match(cmd, /ExitCode/);
+    assert.match(cmd, /EncodedCommand/);
+    const encoded = /EncodedCommand','([A-Za-z0-9+/=]+)'/.exec(cmd)
+      || /EncodedCommand','([^']+)'/.exec(cmd)
+      || /EncodedCommand','([^']+)/.exec(cmd);
+    assert.ok(encoded, cmd);
+    const inner = Buffer.from(encoded[1], 'base64').toString('utf16le');
+    assert.match(inner, /vpn-bypass\.js/);
+    assert.match(inner, /'on'/);
+    assert.match(inner, /VPN_BYPASS_HOME/);
+    assert.ok(calls[0].env && calls[0].env.PATH);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('buildWin32ElevateCommand encodes node argv without CSRF', () => {
+    const built = buildWin32ElevateCommand({
+      node: 'C:\\Program Files\\nodejs\\node.exe',
+      script: 'D:\\app\\bin\\vpn-bypass.js',
+      args: ['on', '--mode', 'inverse'],
+      env: { VPN_BYPASS_HOME: 'C:\\Users\\a\\AppData\\Roaming\\vpn-bypass', PATH: 'C:\\Windows\\System32' },
+      powershell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    });
+    assert.match(built.file, /powershell\.exe$/i);
+    assert.equal(built.inner.includes('csrf'), false);
+    assert.match(built.inner, /VPN_BYPASS_HOME/);
+    assert.match(built.args.join(' '), /EncodedCommand/);
+    const roundtrip = Buffer.from(encodeUtf16LeBase64(built.inner), 'base64').toString('utf16le');
+    assert.equal(roundtrip, built.inner);
   });
 });
 

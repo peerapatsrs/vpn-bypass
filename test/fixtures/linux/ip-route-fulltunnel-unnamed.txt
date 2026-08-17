@@ -1,0 +1,5 @@
+default via 10.243.1.1 dev eth1 proto static metric 50
+10.10.0.0/16 via 10.243.1.1 dev eth1
+10.243.1.92/32 dev eth1 proto kernel scope link src 10.243.1.92
+192.168.1.0/24 dev ens192 proto kernel scope link src 192.168.1.42
+192.168.1.1/32 dev ens192 proto kernel scope link

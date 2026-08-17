@@ -3,15 +3,36 @@
 const { fail } = require('../core/errors');
 const { createExec } = require('./exec');
 
-function getPlatform(opts = {}) {
-  const osName = opts.os || process.platform;
-  const exec = createExec(opts.exec);
-  let mod;
-  if (osName === 'darwin') mod = require('./darwin');
-  else if (osName === 'linux') mod = require('./linux');
-  else if (osName === 'win32') mod = require('./win32');
-  else throw fail('EUNSUPPORTED', `Unsupported OS: ${osName}`);
-  return mod.create(exec, opts);
+const BSD = new Set(['freebsd', 'openbsd', 'netbsd', 'dragonfly']);
+
+function resolveOs(osName) {
+  const n = String(osName || process.platform).toLowerCase();
+  if (n === 'android') return 'linux';
+  if (BSD.has(n)) return 'bsd';
+  return n;
 }
 
-module.exports = { getPlatform };
+function getPlatform(opts = {}) {
+  const requested = opts.os || process.platform;
+  const osName = resolveOs(requested);
+  const exec = createExec(opts.exec);
+  if (osName === 'darwin') return require('./darwin').create(exec, opts);
+  if (osName === 'linux') return require('./linux').create(exec, { ...opts, topologyOs: 'linux' });
+  if (osName === 'win32') return require('./win32').create(exec, opts);
+  if (osName === 'bsd') {
+    return require('./darwin').create(exec, {
+      ...opts,
+      topologyOs: BSD.has(String(requested).toLowerCase()) ? requested : 'freebsd',
+      dnsSkip: true,
+      bin: {
+        netstat: 'netstat',
+        ifconfig: 'ifconfig',
+        route: 'route',
+        lsof: 'lsof',
+      },
+    });
+  }
+  throw fail('EUNSUPPORTED', `Unsupported OS: ${requested}`);
+}
+
+module.exports = { getPlatform, resolveOs };

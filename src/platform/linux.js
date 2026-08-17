@@ -91,7 +91,7 @@ function create(execImpl, opts = {}) {
     } catch {
       ifaces = [];
     }
-    return inferIpv6(routes6, inferTopology(routes, ifaces, 'linux'));
+    return inferIpv6(routes6, inferTopology(routes, ifaces, opts.topologyOs || 'linux'));
   }
 
   async function addCidr(route) {

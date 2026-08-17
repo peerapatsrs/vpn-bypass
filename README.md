@@ -9,7 +9,7 @@ Package: [`@peerapat.srs/vpn-bypass`](https://www.npmjs.com/package/@peerapat.sr
 Command after install: **`vpn-bypass`**  
 Source: [github.com/peerapatsrs/vpn-bypass](https://github.com/peerapatsrs/vpn-bypass)
 
-This is **not** official corporate split-tunnel. The well-tested case is **macOS + Palo Alto GlobalProtect** (`utun`). Linux and Windows adapters exist and are less tested.
+This is **not** official corporate split-tunnel. The only well-tested production case is **macOS + Palo Alto GlobalProtect** (`utun`). Windows and Linux inverse split is implemented and fixture-tested; it has not been proven in daily use in this tree. Browser VPNs, per-app MDM, and iOS are out of scope.
 
 CLI and UI are Thai/English (`locale` in config, default `th`): `vpn-bypass --lang en <command>` or `vpn-bypass lang en`.
 
@@ -19,7 +19,7 @@ CLI and UI are Thai/English (`locale` in config, default `th`): `vpn-bypass --la
 - **Split-DNS (macOS):** a small local forwarder on `127.0.0.1` sends general names to home DNS and corporate suffixes / RFC1918 PTR to VPN DNS. Linux is best-effort (`resolvectl`). Windows does not change system DNS.
 - **IPv6 (macOS/Linux):** when an inet6 LAN gateway exists, adds `::/1` and `8000::/1` via that gateway.
 - **Localhost UI** on `127.0.0.1` (preferred port **18787**) with CSRF token, live HTTP(S) connections (LAN vs VPN), host lookup, Thai/English.
-- **No sudo to open the UI.** macOS asks for an administrator password only when you Start / Stop / allow / deny / watch (route or system DNS changes). The UI process stays your user.
+- **No sudo to open the UI.** Admin is asked only on Start / Stop / allow / deny / watch: macOS password dialog, Windows UAC, Linux `pkexec` when installed. The UI process stays your user.
 - **Save-and-close routes:** after `on`, you can quit; routes stay until `off`. `off` deletes **only** this tool’s ledger (`ownedRoutes` / `ownedDns`), not the VPN client’s defaults.
 - **Reconnect repair:** while the UI is open (after the first admin prompt), overwritten `/1` routes and split-DNS are repaired. CLI `watch` is off by default and must keep that process running.
 - **`try` is not a third mode:** probe `host:443` via LAN; VPN host routes require explicit confirm (`[y/N]` / UI type-again). No automatic failover.
@@ -28,13 +28,38 @@ CLI and UI are Thai/English (`locale` in config, default `th`): `vpn-bypass --la
 
 ## Supported VPNs
 
-Detection is by **tunnel interface name**, not a certified vendor list.
+There is no complete catalog of “every VPN on earth.” Detection is **topology first** (dual IPv4 default, or a tunnel-looking default plus a recoverable home LAN), with adapter **names as a hint only**. Name lists can never be complete — GlobalProtect on Windows is often just `Ethernet 3`.
 
-**Tested:** macOS + **Palo Alto GlobalProtect** (`utun` / `gpd`).
+This tool only acts on **full-tunnel IPv4** (a second default route / tunnel NIC), not browser extensions or per-app MDM VPN.
 
-**Also detected when a tunnel is up:** `utun`, `tun`, `tap`, `ppp`, `ipsec`, WireGuard (`wg` / WinTun), AnyConnect (`cscotun`), FortiClient (`fortissl`), and interface names containing `vpn` / `pangp` / `globalprotect`.
+| Kind | Examples | This tool |
+|---|---|---|
+| Corporate full tunnel | GlobalProtect, AnyConnect, FortiClient, Pulse/Ivanti, IKEv2/SSTP | Inverse split when there is a dual default or tunnel NIC — even if the adapter is `Ethernet 3` / `ens192` / `eth1` |
+| Consumer tun | WireGuard, OpenVPN TUN/TAP, WARP, Tailscale, ZeroTier, NordLynx, Mullvad, Proton, Clash/sing-box TUN | Same: works when a tun/wg NIC or a second default is up |
+| Official split-tunnel profile | GP portal split, per-app VPN | Not replaced; inverse overlays routing and may be the wrong tool |
+| Browser-only / proxy | Chrome VPN extensions, SOCKS, HTTP proxy | No tunnel to split |
 
-Needs a full-tunnel IPv4 VPN with a separate tunnel iface and a reachable home LAN gateway. Not per-app VPN, not browser-only VPN, not an official GP portal split-tunnel profile.
+**Verified in daily use:** macOS + Palo Alto GlobalProtect (`utun`).
+
+**Implemented and fixture-tested:** Windows IPv4 dual-default / unnamed adapters, Linux `ip route` dual-default including unnamed `eth1`/`ens192`. Live Windows Start/UAC and live Linux apply have not been proven end-to-end here.
+
+Parallels Shared Network (`10.211.55.0/24`) or VirtualBox NAT (`10.0.2.0/24`) alone is **not** treated as a VPN.
+
+## Supported OS
+
+A Node CLI cannot run on iOS/iPadOS. Desktop OS this package actually drives:
+
+| OS | Routes | Split-DNS | Admin prompt from UI | Proof |
+|---|---|---|---|---|
+| macOS (`darwin`) | IPv4 + IPv6 `/1` | yes | password dialog | **Verified in daily use** with GlobalProtect |
+| Windows (`win32`) | IPv4 | no (left unchanged) | **UAC Yes/No** (`RunAs`) | **Fixture-tested** detect + `route add` argv. Live UAC Start is implemented, not proven here |
+| Linux | IPv4 + IPv6 `/1` | `resolvectl` best-effort | `pkexec` when installed | **Fixture-tested** detect/plan. Not live-tested in this tree |
+| Android / Termux | same as Linux if `ip` exists | same | usually none — use root/`su` | experimental |
+| FreeBSD / OpenBSD / NetBSD | same route/`ifconfig` family as macOS (experimental) | no | CLI `sudo` (no GUI helper) | experimental |
+
+Anything else (`aix`, `sunos`, …) returns `EUNSUPPORTED`.
+
+Use **`@peerapat.srs/vpn-bypass@0.3.2` or later**. `0.3.1` still matches many Windows VPNs by adapter name and can miss GlobalProtect as `Ethernet N`, and it can fail to find `route`/`ipconfig` when PATH is odd.
 
 ## How inverse works
 
@@ -49,15 +74,16 @@ Tunnel/firewall visibility of general-web DNS+data can be reduced; a GlobalProte
 
 ## Warnings
 
-- Changing routes or system DNS needs **administrator rights** (CLI: `sudo`; UI: macOS password dialog on Start/Stop). Installing the package is not enough.
+- Changing routes or system DNS needs **administrator rights** (CLI: `sudo`; UI: macOS password dialog, Windows UAC, Linux `pkexec` when available). Installing the package is not enough.
 - **Closing the UI tab or the terminal does not restore routes.** Run `vpn-bypass off` (or Stop in the UI).
 - Dry-run first: `vpn-bypass on --dry-run`. There is no automatic failover if a site is unreachable on home internet.
+- Windows does not change system DNS. Linux split-DNS is `resolvectl` best-effort — neither equals macOS split-DNS.
 
 ## Requirements
 
 - Node.js 18 or later
-- Admin rights to change the routing table: `sudo` on the CLI, or the macOS password dialog from the UI (Linux: `pkexec` when available; Windows: best-effort RunAs)
-- An IPv4 VPN that is actually up
+- Admin rights to change the routing table: `sudo` on the CLI; UI: macOS password dialog, Windows UAC, Linux `pkexec` when available
+- An IPv4 VPN that is actually up (full tunnel, not a browser extension)
 - A reachable home LAN gateway
 
 ## Install
@@ -71,30 +97,24 @@ Or without a global install:
 
 ```bash
 npx @peerapat.srs/vpn-bypass status
+npx @peerapat.srs/vpn-bypass ui
 ```
 
-From a clone of this repository:
-
-```bash
-npm i
-npx vpn-bypass status
-# or:
-npm i -g .
-```
+Need **0.3.2 or later** on Windows. From a clone, `npm i` then `npx vpn-bypass` / `npm i -g .` runs this tree.
 
 ## Quick start
 
 ```bash
 vpn-bypass status
 vpn-bypass on --dry-run
-sudo vpn-bypass on          # CLI apply
-vpn-bypass ui               # no sudo; password dialog on Start
+sudo vpn-bypass on          # CLI apply (Windows: elevated prompt / Run as administrator)
+vpn-bypass ui               # no sudo; admin prompt on Start
 sudo vpn-bypass off
 ```
 
 `on` is save-and-close: you can quit the CLI; routes stay until `off`. On macOS inverse, the DNS forwarder is spawned detached so split-DNS also survives quitting the CLI; `off` stops it and restores previous DNS.
 
-Open the UI **without** sudo (`vpn-bypass ui` / `npm start`). Status and preview run as your user. Start / Stop / allow / deny / watch show the macOS admin password dialog, then the unprivileged UI refreshes. Closing the UI stops reconnect repair; routes already applied stay until `off`.
+Open the UI **without** sudo (`vpn-bypass ui` / `npm start`). Status and preview run as your user. Start / Stop / allow / deny / watch prompt for admin (macOS password, Windows UAC, Linux pkexec), then the unprivileged UI refreshes. Closing the UI stops reconnect repair; routes already applied stay until `off`.
 
 If a previous `sudo vpn-bypass ui` left root-owned files:
 
@@ -184,7 +204,7 @@ Override the directory with `VPN_BYPASS_HOME` (or `XDG_CONFIG_HOME` on Unix). Un
 | Some sites still use the VPN after inverse | No inet6 LAN gateway, or Windows. Check `lookup`. |
 | Live traffic shows an IP or CDN PTR | Expected without a prior lookup of that host. Lookup the site once to cache the name. |
 | Home printer / NAS disappears | VPN pushed `192.168.0.0/16` over the LAN. The tool pins your LAN subnet (typically `/24`) via the LAN gateway; if the prefix is not `/24`, check `status`. |
-| `ENOTVPN` | Connect the VPN first; the interface must be up. |
+| `ENOTVPN` | No full-tunnel VPN: need a second IPv4 default (any adapter name) or a tunnel NIC. Connect the VPN first. Browser VPNs / per-app MDM do not count. Upgrade to **0.3.2+** if an older Windows build missed `Ethernet N`. |
 | `EPRIV` / “needs sudo” | CLI: re-run `on` / `off` / `allow` / `deny` with sudo. UI: click Start/Stop again and complete the admin password dialog. |
 | `EACCES` on `~/.config/vpn-bypass` | A previous `sudo vpn-bypass ui` left root-owned files. Once: `sudo chown -R "$(whoami)" ~/.config/vpn-bypass` then `vpn-bypass ui` without sudo. |
 | `EDOMAIN_EMPTY` | Add at least one domain before `on --mode domains`. |
@@ -199,9 +219,19 @@ node --test
 
 Tests use fixtures and inject `exec`. They **do not** add or delete real routes or change live DNS in CI.
 
-Supported adapters: `darwin`, `linux`, `win32`. Other OS values fail with `EUNSUPPORTED`.
+Supported adapters: `darwin`, `linux`, `win32`, plus `android`→Linux and FreeBSD/OpenBSD/NetBSD via the BSD/netstat adapter. Other OS values fail with `EUNSUPPORTED`.
 
 ## Changelog
+
+### 0.3.2
+
+- Detect full-tunnel VPN from dual IPv4 defaults / recoverable home LAN on macOS, Windows, and Linux — adapter name is a hint, not the only path (`Ethernet 3`, `eth1`, `ens192`).
+- Windows: PATH / UTF-16 `route print` / `Get-NetRoute` fallback, UAC `RunAs` for apply, hypervisor LAN (Parallels/VirtualBox) not treated as VPN.
+- Honest OS matrix: macOS + GlobalProtect verified; Windows/Linux fixture-tested.
+
+### 0.3.1
+
+- Windows PATH/CRLF/named-pipe elevate (GitHub). npm `0.3.1` still missed many unnamed adapters.
 
 ### 0.3.0
 

@@ -45,6 +45,12 @@ describe('cli parse + i18n', () => {
     assert.match(t('en', 'warn.dns'), /home LAN/);
     assert.match(t('th', 'status.dns.split'), /แยก/);
     assert.match(t('en', 'status.dns.split'), /split/);
+    assert.match(t('th', 'error.ENOTVPN'), /default/);
+    assert.match(t('th', 'error.ENOTVPN'), /Ethernet/);
+    assert.equal(t('th', 'error.ENOTVPN').includes('utun/'), false);
+    assert.match(t('en', 'error.ENOTVPN'), /any adapter name/i);
+    assert.match(t('en', 'error.ENOTVPN'), /Browser/);
+    assert.equal(t('en', 'error.ENOTVPN').includes('utun/'), false);
   });
 
   it('config locale defaults to th and can be set', () => {

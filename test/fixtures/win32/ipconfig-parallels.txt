@@ -1,0 +1,14 @@
+Windows IP Configuration
+
+Ethernet adapter Ethernet:
+
+   Connection-specific DNS Suffix  . : localdomain
+   IPv4 Address. . . . . . . . . . . : 10.211.55.9
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 10.211.55.1
+
+Ethernet adapter Ethernet 3:
+
+   IPv4 Address. . . . . . . . . . . : 10.243.1.92
+   Subnet Mask . . . . . . . . . . . : 255.255.255.255
+   Default Gateway . . . . . . . . . : 10.243.1.1

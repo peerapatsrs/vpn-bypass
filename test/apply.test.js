@@ -63,6 +63,55 @@ describe('apply / off / dry-run', () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
+  it('win32 inverse dry-run from unnamed Ethernet 3 fixture', async () => {
+    const print = fs.readFileSync(path.join(__dirname, 'fixtures/win32/route-print-wifi.txt'), 'utf8');
+    const ipconfig = fs.readFileSync(path.join(__dirname, 'fixtures/win32/ipconfig-wifi.txt'), 'utf8');
+    const exec = recordingExec(async (file) => {
+      const base = path.basename(file).toLowerCase();
+      if (base === 'route') return { stdout: print, stderr: '' };
+      if (base === 'ipconfig') return { stdout: ipconfig, stderr: '' };
+      return { stdout: '', stderr: '' };
+    });
+    const home = tmpHome();
+    const platform = getPlatform({ os: 'win32', exec, isAdmin: async () => true });
+    const result = await on({
+      paths: getPaths(home),
+      platform,
+      dryRun: true,
+      mode: 'inverse',
+    });
+    assert.equal(result.dryRun, true);
+    assert.equal(result.detect.vpn.up, true);
+    assert.equal(result.detect.vpn.iface, 'Ethernet 3');
+    assert.ok(result.actions.some((a) => a.kind === 'split' && a.gw === '192.168.1.1' && a.prefix === 1));
+    assert.equal(mutationCalls(exec.calls).length, 0);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('linux inverse dry-run from unnamed eth1 fixture', async () => {
+    const routeTxt = fs.readFileSync(path.join(__dirname, 'fixtures/linux/ip-route-unnamed.txt'), 'utf8');
+    const addrTxt = fs.readFileSync(path.join(__dirname, 'fixtures/linux/ip-addr-unnamed.txt'), 'utf8');
+    const exec = recordingExec(async (file, args) => {
+      const joined = [file, ...args].join(' ');
+      if (joined.includes('route')) return { stdout: routeTxt, stderr: '' };
+      if (joined.includes('addr')) return { stdout: addrTxt, stderr: '' };
+      return { stdout: '', stderr: '' };
+    });
+    const home = tmpHome();
+    const platform = getPlatform({ os: 'linux', exec, isAdmin: async () => true });
+    const result = await on({
+      paths: getPaths(home),
+      platform,
+      dryRun: true,
+      mode: 'inverse',
+    });
+    assert.equal(result.dryRun, true);
+    assert.equal(result.detect.vpn.iface, 'eth1');
+    assert.ok(result.actions.some((a) => a.kind === 'split' && a.gw === '192.168.1.1'));
+    assert.equal(mutationCalls(exec.calls).length, 0);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
   it('watch does not re-apply after off or when VPN is down', async () => {
     const home = tmpHome();
     const platform = mockPlatform();

@@ -1,0 +1,4 @@
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536
+    inet 127.0.0.1/8 scope host lo
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 10.211.55.9/24 brd 10.211.55.255 scope global eth0

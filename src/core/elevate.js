@@ -121,6 +121,43 @@ function buildDarwinElevateScript(shellCmd, prompt = PROMPT) {
   return `do shell script ${appleScriptQuote(shellCmd)} with prompt ${appleScriptQuote(prompt)} with administrator privileges`;
 }
 
+function psSingleQuote(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function powershellExe() {
+  const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  return path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
+function encodeUtf16LeBase64(text) {
+  return Buffer.from(String(text), 'utf16le').toString('base64');
+}
+
+function buildWin32InnerCommand({ node, script, args = [], env = {} }) {
+  const assigns = ENV_KEYS
+    .filter((key) => env[key] != null && env[key] !== '')
+    .map((key) => `$env:${key}='${psSingleQuote(env[key])}'`);
+  const argList = [script, ...args].map((a) => `'${psSingleQuote(String(a))}'`).join(',');
+  return [
+    ...assigns,
+    `& '${psSingleQuote(node)}' @(${argList})`,
+    'if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE } else { exit 0 }',
+  ].join('; ');
+}
+
+function buildWin32ElevateCommand({ node, script, args = [], env = {}, powershell }) {
+  const ps = powershell || powershellExe();
+  const inner = buildWin32InnerCommand({ node, script, args, env });
+  const encoded = encodeUtf16LeBase64(inner);
+  const outer = [
+    `$p = Start-Process -FilePath '${psSingleQuote(ps)}' -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${encoded}') -Verb RunAs -Wait -WindowStyle Hidden -PassThru`,
+    'if ($null -eq $p) { exit 1 }',
+    'exit $p.ExitCode',
+  ].join('; ');
+  return { file: ps, args: ['-NoProfile', '-NonInteractive', '-Command', outer], inner };
+}
+
 function assertJob(job) {
   if (!job || typeof job !== 'object' || !JOB_CMDS.has(job.cmd)) {
     throw fail('EINVAL', 'invalid elevate job');
@@ -159,7 +196,9 @@ function isCanceled(stderr, code) {
   const s = `${stderr || ''}`;
   if (/User canceled/i.test(s) || /canceled by the user/i.test(s) || /-128/.test(s)) return true;
   if (/Request dismissed/i.test(s) || /org\.freedesktop\.PolicyKit/i.test(s) && /dismissed/i.test(s)) return true;
+  if (/operation was canceled/i.test(s) || /cancelled by the user/i.test(s)) return true;
   if (code === 122 /* pkexec auth fail */) return true;
+  if (code === 1223 || code === 1602) return true;
   return false;
 }
 
@@ -172,7 +211,7 @@ function spawnOnce(file, args, opts = {}) {
     return Promise.reject(new TypeError('elevate args must be a string array'));
   }
   const timeoutMs = opts.timeoutMs == null ? 300000 : opts.timeoutMs;
-  const env = opts.env || undefined;
+  const env = { ...execEnv(), ...(opts.env || {}) };
   return new Promise((resolve, reject) => {
     const child = spawnImpl(file, args, {
       env,
@@ -397,12 +436,21 @@ function createElevate(opts = {}) {
       return { elevated: true };
     }
     if (platformName === 'win32') {
-      const argList = [script, ...argv].map((a) => `'${String(a).replace(/'/g, "''")}'`).join(',');
-      const cmd = `Start-Process -FilePath '${String(node).replace(/'/g, "''")}' -ArgumentList @(${argList}) -Verb RunAs -Wait -WindowStyle Hidden`;
-      const result = await spawnOnce('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], {
+      const built = buildWin32ElevateCommand({
+        node,
+        script,
+        args: argv,
+        env,
+        powershell: opts.powershell,
+      });
+      const result = await spawnOnce(built.file, built.args, {
         spawnImpl,
         timeoutMs: 300000,
+        env,
       });
+      if (isCanceled(result.stderr, result.code)) {
+        throw fail('EPRIV', 'administrator privileges required');
+      }
       if (result.code !== 0) {
         throw fail('EPRIV', result.stderr || 'administrator privileges required');
       }
@@ -482,6 +530,11 @@ module.exports = {
   helperEnv,
   buildDarwinShellCommand,
   buildDarwinElevateScript,
+  buildWin32InnerCommand,
+  buildWin32ElevateCommand,
+  powershellExe,
+  psSingleQuote,
+  encodeUtf16LeBase64,
   assertJob,
   jobToArgv,
   isCanceled,

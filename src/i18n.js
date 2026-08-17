@@ -16,7 +16,7 @@ const STRINGS = {
   watch [on|off]                 เฝ้าทับเส้นทางใน CLI (ค่าเริ่มปิด; ต้องเปิดโปรเซสทิ้งไว้)
                                  UI ซ่อมเส้นที่ VPN ทับให้อัตโนมัติขณะเปิดอยู่ หลังยืนยันรหัสผู้ดูแลครั้งแรก
   lookup <โฮสต์>                 ดูว่าโฮสต์/ไอพีวิ่งเน็ตบ้านหรือ VPN
-  ui                             เปิด UI ที่ 127.0.0.1 (ไม่ต้อง sudo — จะถามรหัสเมื่อกดเริ่มใช้/หยุดใช้)
+  ui                             เปิด UI ที่ 127.0.0.1 (ไม่ต้อง sudo — จะถามสิทธิ์ผู้ดูแลเมื่อกดเริ่มใช้/หยุดใช้: รหัสบน macOS, UAC บน Windows, pkexec บน Linux)
   lang th|en                     บันทึกภาษาในคอนฟิก
 
 ค่าเริ่มคือ inverse: เว็บทั่วไปออกเน็ตบ้าน ของบริษัทเข้า VPN (DNS เว็บทั่วไปก็ถามเน็ตบ้าน)
@@ -27,7 +27,7 @@ const STRINGS = {
     'error.EACCES': 'เปิดไฟล์คอนฟิกไม่ได้ (สิทธิ์ถูกปฏิเสธ) — ถ้าเคยรันด้วย sudo ให้คืนเจ้าของแล้วเปิด UI โดยไม่ใช้ sudo:\nsudo chown -R "$(whoami)" ~/.config/vpn-bypass',
     'error.EPERM': 'ระบบปฏิเสธการแก้ตารางเส้นทาง',
     'error.EINVAL': 'อินพุตไม่ถูกต้อง: {message}',
-    'error.ENOTVPN': 'ยังไม่พบ VPN — ต้องมีอุโมงค์หรือ default แยกจากเน็ตบ้าน (ชื่ออะแดปเตอร์อะไรก็ได้)',
+    'error.ENOTVPN': 'ยังไม่พบ VPN แบบ full-tunnel — ต้องมี default แยกจากเน็ตบ้าน หรือ NIC อุโมงค์ (ชื่ออะแดปเตอร์อะไรก็ได้ รวม Ethernet) ไม่รองรับ VPN ในเบราว์เซอร์',
     'error.EDOMAIN_EMPTY': 'โหมดระบุเว็บใช้ไม่ได้เมื่อลิสต์โดเมนว่าง',
     'error.ENOTLOOPBACK': 'เซิร์ฟเวอร์ต้องฟังที่ 127.0.0.1 เท่านั้น',
     'error.EBLOCKED': 'โฮสต์นี้ถูกบล็อก (localhost / link-local / metadata)',
@@ -111,7 +111,7 @@ Commands:
   watch [on|off]                 Re-apply missing/overwritten routes (off by default; process must stay up)
                                  The UI repairs overwritten routes while it stays open (after the first admin password in that session)
   lookup <host>                  Show whether a host/IP uses LAN or VPN
-  ui                             Open the UI on 127.0.0.1 (no sudo; macOS asks for an admin password on Start/Stop)
+  ui                             Open the UI on 127.0.0.1 (no sudo; admin prompt on Start/Stop: macOS password, Windows UAC, Linux pkexec)
   lang th|en                     Save CLI/UI language in config
 
 Default mode is inverse: general web via home LAN, corp via VPN (general-web DNS also uses LAN).
@@ -122,7 +122,7 @@ try is not a third mode and never failovers automatically.`,
     'error.EACCES': 'Cannot open config (permission denied). If a previous sudo run left root-owned files, fix ownership then run the UI without sudo:\nsudo chown -R "$(whoami)" ~/.config/vpn-bypass',
     'error.EPERM': 'The OS refused to change the routing table',
     'error.EINVAL': 'Invalid input: {message}',
-    'error.ENOTVPN': 'No VPN detected — need a tunnel or a default route separate from home LAN (any adapter name)',
+    'error.ENOTVPN': 'No full-tunnel VPN detected — need a second IPv4 default or a tunnel NIC (any adapter name, including Ethernet). Browser VPNs are not supported.',
     'error.EDOMAIN_EMPTY': 'domains mode cannot be enabled with an empty domain list',
     'error.ENOTLOOPBACK': 'The server must listen on 127.0.0.1 only',
     'error.EBLOCKED': 'This host is blocked (localhost / link-local / metadata)',

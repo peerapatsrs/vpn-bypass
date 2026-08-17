@@ -1,0 +1,6 @@
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536
+    inet 127.0.0.1/8 scope host lo
+2: ens192: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 192.168.1.42/24 brd 192.168.1.255 scope global ens192
+3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 10.243.1.92/32 scope global eth1

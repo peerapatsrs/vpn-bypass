@@ -1,125 +1,26 @@
 'use strict';
 
-const { isIpv4, inCidr, networkAddr } = require('../core/net');
+const { isIpv4, networkAddr } = require('../core/net');
 const {
   parseWin32RoutePrint,
   parseWin32Ipconfig,
+  parseWin32NetRoute,
   inferTopology,
   isVpnIface,
   isWifiIface,
   isLanIface,
+  isLoopName,
+  pickIpv4Defaults,
 } = require('./common');
 
-function isLoopName(name) {
-  const n = String(name || '').toLowerCase();
-  return n === 'lo' || n === 'lo0' || n.includes('loopback');
-}
+const PS_NETROUTE_CMD = [
+  '$a = @{}',
+  'Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { if (-not $a.ContainsKey($_.InterfaceIndex)) { $a[$_.InterfaceIndex] = $_.IPAddress } }',
+  'Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $ip = $a[$_.InterfaceIndex]; if (-not $ip) { $ip = "0.0.0.0" }; Write-Output ($_.DestinationPrefix + " " + $_.NextHop + " " + $ip + " " + $_.RouteMetric) }',
+].join('; ');
 
-function isLikelyHomeLan(ip) {
-  return isIpv4(ip) && inCidr(ip, '192.168.0.0', 16);
-}
-
-function connectedPrefix(routes, ifaceIp) {
-  const hits = (routes || []).filter((r) => (
-    r.ifaceIp === ifaceIp
-    && !r.gw
-    && r.prefix > 0
-    && r.prefix < 32
-    && r.dest !== '127.0.0.0'
-    && r.dest !== '224.0.0.0'
-  ));
-  if (hits.length) return Math.min(...hits.map((r) => r.prefix));
-  const hostOnly = (routes || []).some((r) => (
-    r.ifaceIp === ifaceIp && r.dest === ifaceIp && r.prefix === 32 && !r.gw
-  ));
-  return hostOnly ? 32 : null;
-}
-
-function vpnScore(d, routes) {
-  let s = 0;
-  const ip = d.ifaceIp;
-  const gw = d.gw;
-  if (isLikelyHomeLan(ip) || isLikelyHomeLan(gw)) s -= 10;
-  if (ip && inCidr(ip, '100.64.0.0', 10)) s += 6;
-  if (gw && inCidr(gw, '100.64.0.0', 10)) s += 4;
-  if (ip && inCidr(ip, '10.0.0.0', 8)) s += 3;
-  if (gw && inCidr(gw, '10.0.0.0', 8)) s += 2;
-  if (ip && inCidr(ip, '172.16.0.0', 12)) s += 2;
-  if (gw && inCidr(gw, '172.16.0.0', 12)) s += 1;
-  const prefix = connectedPrefix(routes, ip);
-  if (prefix === 32) s += 5;
-  else if (prefix != null && prefix >= 30) s += 4;
-  else if (prefix != null && prefix <= 24) s -= 3;
-  if (d.metric != null && d.metric <= 2) s += 2;
-  else if (d.metric != null && d.metric >= 200) s -= 2;
-  return s;
-}
-
-function recoverLanDef(routes, vpnDef, gateways) {
-  const skip = vpnDef && vpnDef.ifaceIp;
-  const candidates = (routes || []).filter((r) => (
-    !r.gw
-    && r.prefix >= 8
-    && r.prefix <= 28
-    && r.ifaceIp
-    && r.ifaceIp !== skip
-    && r.dest !== '127.0.0.0'
-    && r.dest !== '224.0.0.0'
-    && !String(r.dest).startsWith('255.')
-  ));
-  const home = candidates.find((r) => isLikelyHomeLan(r.ifaceIp) || isLikelyHomeLan(r.dest));
-  const hit = home || candidates.find((r) => r.prefix <= 24) || null;
-  if (!hit) return null;
-  const gw = (gateways && hit.ifaceIp && gateways[hit.ifaceIp]) || null;
-  return {
-    dest: '0.0.0.0',
-    prefix: 0,
-    gw,
-    iface: hit.ifaceIp,
-    ifaceIp: hit.ifaceIp,
-    metric: hit.metric,
-    recovered: true,
-  };
-}
-
-function pickWinDefaults(routes, gateways) {
-  const defaults = (routes || []).filter((r) => r.prefix === 0 && r.dest === '0.0.0.0');
-  const ranked = defaults.slice().sort((a, b) => vpnScore(b, routes) - vpnScore(a, routes));
-
-  if (defaults.length === 0) {
-    return { defaults, lanDef: recoverLanDef(routes, null, gateways), vpnDef: null };
-  }
-
-  if (defaults.length === 1) {
-    const only = defaults[0];
-    if (vpnScore(only, routes) > 0) {
-      return { defaults, lanDef: recoverLanDef(routes, only, gateways), vpnDef: only };
-    }
-    return { defaults, lanDef: only, vpnDef: null };
-  }
-
-  const home = defaults.filter((d) => isLikelyHomeLan(d.gw) || isLikelyHomeLan(d.ifaceIp));
-  const rest = defaults.filter((d) => !home.includes(d));
-  let lanDef = null;
-  let vpnDef = null;
-  if (home.length && rest.length) {
-    lanDef = home.slice().sort((a, b) => vpnScore(a, routes) - vpnScore(b, routes))[0];
-    vpnDef = rest.slice().sort((a, b) => vpnScore(b, routes) - vpnScore(a, routes))[0];
-  } else {
-    vpnDef = ranked[0];
-    lanDef = ranked[ranked.length - 1];
-    if (vpnDef === lanDef || vpnScore(vpnDef, routes) <= 0) {
-      vpnDef = null;
-    }
-    if (vpnDef && lanDef && vpnDef.ifaceIp === lanDef.ifaceIp) {
-      lanDef = recoverLanDef(routes, vpnDef, gateways);
-    }
-  }
-  if (vpnDef && !lanDef) lanDef = recoverLanDef(routes, vpnDef, gateways);
-  if (lanDef && lanDef.recovered && !lanDef.gw && gateways && lanDef.ifaceIp) {
-    lanDef.gw = gateways[lanDef.ifaceIp] || null;
-  }
-  return { defaults, lanDef, vpnDef };
+function ipv4Defaults(parsed) {
+  return (parsed && parsed.routes || []).filter((r) => r.prefix === 0 && r.dest === '0.0.0.0');
 }
 
 function pickLanAdapter(ifaces, preferredName, excludeNames) {
@@ -139,10 +40,14 @@ function pickLanAdapter(ifaces, preferredName, excludeNames) {
 }
 
 function vpnAdapterName(ifaces, vpnDef, ipNames) {
+  const fromIp = vpnDef && vpnDef.ifaceIp ? ipNames[vpnDef.ifaceIp] : null;
+  if (fromIp) return fromIp;
+  if (vpnDef && vpnDef.iface && !isIpv4(vpnDef.iface) && !isLoopName(vpnDef.iface)) {
+    return vpnDef.iface;
+  }
+  if (vpnDef && vpnDef.ifaceIp && isIpv4(vpnDef.ifaceIp)) return vpnDef.ifaceIp;
   const named = (ifaces || []).find((i) => isVpnIface(i.name));
   if (named) return named.name;
-  const fromIp = vpnDef && vpnDef.ifaceIp ? ipNames[vpnDef.ifaceIp] : null;
-  if (fromIp && isVpnIface(fromIp)) return fromIp;
   return vpnDef ? 'vpn' : null;
 }
 
@@ -150,12 +55,12 @@ function lanAdapterName(ifaces, lanDef, ipNames, vpnFromIp) {
   const fromIp = lanDef && lanDef.ifaceIp ? ipNames[lanDef.ifaceIp] : null;
   const exclude = vpnFromIp ? [vpnFromIp] : [];
   const picked = pickLanAdapter(ifaces, fromIp, exclude);
-  return (picked && picked.name) || fromIp || 'lan';
+  return (picked && picked.name) || fromIp || (lanDef && lanDef.ifaceIp) || 'lan';
 }
 
 function mapWinRoutes(parsed, ipNames = {}, gateways = {}) {
   const { routes, ifaces } = parsed;
-  const { lanDef, vpnDef } = pickWinDefaults(routes, gateways);
+  const { lanDef, vpnDef } = pickIpv4Defaults(routes, { gateways });
   const vpnFromIp = vpnDef && vpnDef.ifaceIp ? ipNames[vpnDef.ifaceIp] : null;
   const lanName = lanDef ? lanAdapterName(ifaces, lanDef, ipNames, vpnFromIp) : null;
   const vpnName = vpnAdapterName(ifaces, vpnDef, ipNames);
@@ -190,7 +95,7 @@ function mapWinRoutes(parsed, ipNames = {}, gateways = {}) {
 }
 
 function ifaceObjects(parsed, mapped, ipNames = {}, gateways = {}) {
-  const { lanDef, vpnDef } = pickWinDefaults(parsed.routes || [], gateways);
+  const { lanDef, vpnDef } = pickIpv4Defaults(parsed.routes || [], { gateways });
   const defaults = mapped.filter((r) => r.prefix === 0);
   const vpnFromIp = vpnDef && vpnDef.ifaceIp ? ipNames[vpnDef.ifaceIp] : null;
   const rows = (parsed.ifaces || []).map((i) => {
@@ -231,12 +136,12 @@ function parseIpInfo(text) {
   return { names: parsed || Object.create(null), gateways: Object.create(null), adapters: [] };
 }
 
-function detectFromPrint(text, ipconfigText) {
-  const parsed = parseWin32RoutePrint(text);
+function detectFromParsed(parsed, ipconfigText) {
   const ipinfo = parseIpInfo(ipconfigText);
   const mapped = mapWinRoutes(parsed, ipinfo.names, ipinfo.gateways);
-  const topo = inferTopology(mapped, ifaceObjects(parsed, mapped, ipinfo.names, ipinfo.gateways), 'win32');
-  const { lanDef } = pickWinDefaults(parsed.routes || [], ipinfo.gateways);
+  const ifaces = ifaceObjects(parsed, mapped, ipinfo.names, ipinfo.gateways);
+  const topo = inferTopology(mapped, ifaces, 'win32', { gateways: ipinfo.gateways });
+  const { lanDef } = pickIpv4Defaults(parsed.routes || [], { gateways: ipinfo.gateways });
   if (lanDef && lanDef.gw && (!topo.lan || !topo.lan.gw)) {
     const prefix = topo.lan && topo.lan.prefix != null ? topo.lan.prefix : 24;
     topo.lan = {
@@ -249,6 +154,10 @@ function detectFromPrint(text, ipconfigText) {
     };
   }
   return topo;
+}
+
+function detectFromPrint(text, ipconfigText) {
+  return detectFromParsed(parseWin32RoutePrint(text), ipconfigText);
 }
 
 function create(execImpl, opts = {}) {
@@ -268,26 +177,49 @@ function create(execImpl, opts = {}) {
     }
   }
 
+  async function stdoutOf(file, args) {
+    try {
+      const r = await exec(file, args);
+      return (r && r.stdout) || '';
+    } catch (err) {
+      return (err && err.stdout) || '';
+    }
+  }
+
+  async function collectParsedRoutes() {
+    let parsed = parseWin32RoutePrint(await stdoutOf('route', ['print', '-4']));
+    if (!ipv4Defaults(parsed).length) {
+      const parsedAll = parseWin32RoutePrint(await stdoutOf('route', ['print']));
+      const betterDefaults = ipv4Defaults(parsedAll).length > ipv4Defaults(parsed).length;
+      const betterRoutes = parsedAll.routes.length > parsed.routes.length;
+      if (betterDefaults || betterRoutes) parsed = parsedAll;
+    }
+    if (!parsed.routes.length) {
+      const psArgs = [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        PS_NETROUTE_CMD,
+      ];
+      let parsedPs = parseWin32NetRoute(await stdoutOf('powershell', psArgs));
+      if (!parsedPs.routes.length) {
+        parsedPs = parseWin32NetRoute(await stdoutOf('powershell.exe', psArgs));
+      }
+      if (parsedPs.routes.length) parsed = parsedPs;
+    }
+    return parsed;
+  }
+
   async function listRoutes() {
-    const { stdout } = await exec('route', ['print', '-4']);
-    return parseWin32RoutePrint(stdout).routes;
+    return (await collectParsedRoutes()).routes;
   }
 
   async function detect() {
-    let stdout = '';
-    try {
-      const r = await exec('route', ['print', '-4']);
-      stdout = r.stdout;
-    } catch {
-      stdout = '';
-    }
-    let ipconfigText = '';
-    try {
-      ipconfigText = (await exec('ipconfig')).stdout || '';
-    } catch {
-      ipconfigText = '';
-    }
-    return detectFromPrint(stdout, ipconfigText);
+    const parsed = await collectParsedRoutes();
+    const ipconfigText = await stdoutOf('ipconfig', []);
+    return detectFromParsed(parsed, ipconfigText);
   }
 
   async function addCidr(route) {
@@ -296,9 +228,11 @@ function create(execImpl, opts = {}) {
     if (route.gw) assertSafeIpv4(route.gw);
     const gw = route.gw || '0.0.0.0';
     const mask = winMask(route);
+    const argsAdd = ['add', route.dest, 'mask', mask, gw];
+    const argsChange = ['change', route.dest, 'mask', mask, gw];
     await addOrChange(
-      () => exec('route', ['add', route.dest, 'mask', mask, gw]),
-      () => exec('route', ['change', route.dest, 'mask', mask, gw]),
+      () => exec('route', argsAdd),
+      () => exec('route', argsChange),
     );
   }
 
@@ -359,4 +293,5 @@ module.exports = {
   parseRoutes: (t) => parseWin32RoutePrint(t).routes,
   parsePrint: parseWin32RoutePrint,
   detectFromPrint,
+  detectFromParsed,
 };

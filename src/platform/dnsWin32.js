@@ -1,12 +1,15 @@
 'use strict';
 
-function skipped(detect, extra) {
+function skipped(detect, extra, osName) {
   const lanGw = detect && detect.lan && detect.lan.gw;
+  const os = osName || 'win32';
   return {
     mode: 'unsupported',
     method: null,
-    os: 'win32',
-    warning: 'Windows system DNS is left unchanged so adapters are not bricked. General-web DNS may still go via the VPN.',
+    os,
+    warning: os === 'win32'
+      ? 'Windows system DNS is left unchanged so adapters are not bricked. General-web DNS may still go via the VPN.'
+      : 'System DNS is left unchanged on this OS. General-web DNS may still go via the VPN.',
     previous: [],
     lanServers: lanGw ? [lanGw] : [],
     vpnServers: [],
@@ -16,7 +19,8 @@ function skipped(detect, extra) {
   };
 }
 
-function create() {
+function create(opts = {}) {
+  const osName = opts.os || 'win32';
   async function readDns(detect) {
     return {
       lanServers: detect && detect.lan && detect.lan.gw ? [detect.lan.gw] : [],
@@ -29,7 +33,7 @@ function create() {
   }
 
   async function applyDns(opts = {}) {
-    return skipped(opts.detect);
+    return skipped(opts.detect, undefined, osName);
   }
 
   async function restoreDns() {
@@ -48,7 +52,7 @@ function create() {
       vpnServers: [],
       suffixes: [],
       listen: null,
-      warning: (owned && owned.warning) || skipped(detect).warning,
+      warning: (owned && owned.warning) || skipped(detect, undefined, osName).warning,
       ok: true,
     };
   }

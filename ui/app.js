@@ -19,6 +19,9 @@
       privTitle: "จะถามรหัสผู้ดูแลเมื่อเปลี่ยนเส้นทาง",
       privBody:
         "ดูสถานะและดูตัวอย่างได้เลย จะถามรหัสผู้ดูแลเมื่อกดเริ่มใช้/หยุดใช้ รวมถึงอนุญาต ปฏิเสธ เฝ้าทับ หรือการแก้เส้นทาง/DNS ของระบบ",
+      privTitleWin: "กดเริ่มใช้แล้ว Windows จะเด้งถามสิทธิ์ผู้ดูแล",
+      privBodyWin:
+        "ดูสถานะได้เลย พอกดเริ่มใช้/หยุดใช้ Windows จะขึ้น UAC ให้กด Yes — ไม่ใช่ช่องรหัสแบบ macOS ถ้าไม่ขึ้นหน้าต่าง แปลว่าการยกสิทธิ์ยังรันไม่สำเร็จ",
       privLocked: "ระบบนี้ยังยกสิทธิ์อัตโนมัติไม่ได้ — ปุ่มที่เปลี่ยนเส้นทางถูกล็อกไว้",
       statusTitle: "สถานะ",
       os: "ระบบ",
@@ -46,6 +49,8 @@
       osMac: "macOS",
       osWin: "Windows",
       osLinux: "Linux",
+      osBsd: "BSD",
+      osAndroid: "Android",
       modeTitle: "วิธีแยกเส้นทาง",
       modeDefaultEyebrow: "ค่าเริ่ม",
       modeDefaultTitle: "เว็บทั่วไปออกเน็ตบ้าน ของบริษัทเข้า VPN",
@@ -174,6 +179,9 @@
       privTitle: "Admin password is asked when routes change",
       privBody:
         "Status and preview work without admin. Start, Stop, allow, deny, watch, and anything that changes routes or system DNS will ask for an administrator password.",
+      privTitleWin: "Start asks Windows for administrator permission",
+      privBodyWin:
+        "Status works without admin. Start/Stop should show Windows UAC (Yes/No) — not a macOS password field. If no prompt appears, the elevated Start command failed to run.",
       privLocked: "This OS cannot prompt for admin from the UI — route-changing controls are locked",
       statusTitle: "Status",
       os: "System",
@@ -201,6 +209,8 @@
       osMac: "macOS",
       osWin: "Windows",
       osLinux: "Linux",
+      osBsd: "BSD",
+      osAndroid: "Android",
       modeTitle: "How traffic is split",
       modeDefaultEyebrow: "Default",
       modeDefaultTitle: "General web via home internet, company sites via VPN",
@@ -750,8 +760,14 @@
     const k = String(os || "").toLowerCase();
     if (k.includes("darwin") || k === "macos" || k === "mac") return t("osMac");
     if (k.includes("win")) return t("osWin");
+    if (k.includes("android")) return t("osAndroid");
     if (k.includes("linux")) return t("osLinux");
+    if (k.includes("bsd") || k === "dragonfly" || k === "freebsd" || k === "openbsd" || k === "netbsd") return t("osBsd");
     return os || t("unknown");
+  }
+
+  function isWin(st) {
+    return Boolean(st && String(st.os || "").toLowerCase().includes("win"));
   }
 
   function isValidHost(raw) {
@@ -884,8 +900,8 @@
 
         ${st && st.hasAdmin === false ? `
           <div class="banner ${st.canElevate ? "banner-priv-info" : "banner-priv"}" role="${st.canElevate ? "status" : "alert"}">
-            <h2>${th("privTitle")}</h2>
-            <p>${th("privBody")}</p>
+            <h2>${th(isWin(st) ? "privTitleWin" : "privTitle")}</h2>
+            <p>${th(isWin(st) ? "privBodyWin" : "privBody")}</p>
             ${st.canElevate ? "" : `<p class="hint">${th("privLocked")}</p>`}
           </div>` : ""}
 

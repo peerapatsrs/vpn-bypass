@@ -10,11 +10,11 @@ const {
 } = require('../core/net');
 const { parseLsofFields, stdoutOrEmpty } = require('./connections');
 const dnsDarwin = require('./dnsDarwin');
+const dnsSkip = require('./dnsWin32');
 
-const NETSTAT = '/usr/sbin/netstat';
-const IFCONFIG = '/sbin/ifconfig';
-const ROUTE = '/sbin/route';
-const LSOF = '/usr/sbin/lsof';
+function bin(opts, key, fallback) {
+  return (opts.bin && opts.bin[key]) || fallback;
+}
 
 function inet6Args(route, op) {
   assertSafeIpv6(route.dest);
@@ -60,6 +60,11 @@ function mutateArgs(route, op) {
 function create(execImpl, opts = {}) {
   const exec = createExec(execImpl);
   const isAdmin = opts.isAdmin || unixIsAdmin(opts.getuid);
+  const osName = opts.topologyOs || 'darwin';
+  const NETSTAT = bin(opts, 'netstat', '/usr/sbin/netstat');
+  const IFCONFIG = bin(opts, 'ifconfig', '/sbin/ifconfig');
+  const ROUTE = bin(opts, 'route', '/sbin/route');
+  const LSOF = bin(opts, 'lsof', '/usr/sbin/lsof');
 
   async function listRoutes4() {
     const { stdout } = await exec(NETSTAT, ['-rn', '-f', 'inet']);
@@ -103,7 +108,7 @@ function create(execImpl, opts = {}) {
     } catch {
       ifaces = [];
     }
-    return inferIpv6(routes6, inferTopology(routes, ifaces, 'darwin'));
+    return inferIpv6(routes6, inferTopology(routes, ifaces, osName));
   }
 
   async function addCidr(route) {
@@ -149,13 +154,15 @@ function create(execImpl, opts = {}) {
     return parseLsofFields(stdout);
   }
 
-  const dns = dnsDarwin.create({
-    exec,
-    startForwarder: opts.startForwarder,
-    stopForwarder: opts.stopForwarder,
-    etcResolverDir: opts.etcResolverDir,
-    spawnImpl: opts.spawnImpl,
-  });
+  const dns = opts.dnsSkip
+    ? dnsSkip.create({ os: osName })
+    : dnsDarwin.create({
+      exec,
+      startForwarder: opts.startForwarder,
+      stopForwarder: opts.stopForwarder,
+      etcResolverDir: opts.etcResolverDir,
+      spawnImpl: opts.spawnImpl,
+    });
 
   return {
     detect,
